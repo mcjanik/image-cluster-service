@@ -1,22 +1,17 @@
-from fastapi import FastAPI, UploadFile, File, Request, Form
+from fastapi import FastAPI, UploadFile, File, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
 from PIL import Image
 import io
 import os
 
 app = FastAPI()
-
-# Создаем папку для шаблонов, если её нет
 os.makedirs("templates", exist_ok=True)
-
 templates = Jinja2Templates(directory="templates")
 
 @app.get("/", response_class=HTMLResponse)
 async def upload_form(request: Request):
     return templates.TemplateResponse("upload.html", {"request": request})
-
 
 @app.post("/upload", response_class=HTMLResponse)
 async def handle_upload(request: Request, file: UploadFile = File(...)):
