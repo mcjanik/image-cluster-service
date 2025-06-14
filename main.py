@@ -237,7 +237,7 @@ def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> Li
         # Отправляем batch запрос к Claude
         message = client.messages.create(
             model="claude-3-5-sonnet-20241022",
-            max_tokens=4000,
+            max_tokens=70000,  # Увеличиваем лимит для обработки большого количества изображений
             messages=[
                 {
                     "role": "user",
