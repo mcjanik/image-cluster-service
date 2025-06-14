@@ -10,11 +10,23 @@ import json
 import traceback
 from typing import List
 import logging
+import logging.handlers
 
-# Настройка логирования
+# Создаем папку для логов
+os.makedirs("logs", exist_ok=True)
+
+# Настраиваем логирование в файл и консоль
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),  # Вывод в консоль
+        logging.handlers.RotatingFileHandler(
+            'logs/app.log',
+            maxBytes=10*1024*1024,  # 10MB
+            backupCount=5
+        )
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -567,6 +579,139 @@ async def debug_page():
         </body>
         </html>
         """, status_code=200)
+
+
+@app.get("/api/logs")
+async def get_logs(lines: int = 100):
+    """Получить последние строки логов"""
+    try:
+        log_file = "logs/app.log"
+        if not os.path.exists(log_file):
+            return JSONResponse({
+                "success": False,
+                "message": "Файл логов не найден",
+                "logs": []
+            })
+
+        # Читаем последние N строк
+        with open(log_file, 'r', encoding='utf-8') as f:
+            all_lines = f.readlines()
+            recent_lines = all_lines[-lines:] if len(
+                all_lines) > lines else all_lines
+
+        return JSONResponse({
+            "success": True,
+            "total_lines": len(all_lines),
+            "returned_lines": len(recent_lines),
+            "logs": [line.strip() for line in recent_lines]
+        })
+
+    except Exception as e:
+        logger.error(f"Ошибка чтения логов: {e}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e),
+            "logs": []
+        }, status_code=500)
+
+
+@app.get("/logs", response_class=HTMLResponse)
+async def logs_page():
+    """Веб-страница для просмотра логов"""
+    return HTMLResponse("""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Логи Somon.tj</title>
+        <meta charset="utf-8">
+        <style>
+            body { font-family: monospace; margin: 20px; background: #1a1a1a; color: #00ff00; }
+            .log-container { background: #000; padding: 20px; border-radius: 5px; max-height: 80vh; overflow-y: auto; }
+            .log-line { margin: 2px 0; white-space: pre-wrap; }
+            .error { color: #ff4444; }
+            .warning { color: #ffaa00; }
+            .info { color: #00ff00; }
+            .controls { margin-bottom: 20px; }
+            button { padding: 10px 20px; margin: 5px; background: #333; color: #fff; border: none; border-radius: 3px; cursor: pointer; }
+            button:hover { background: #555; }
+            select { padding: 8px; background: #333; color: #fff; border: 1px solid #555; }
+        </style>
+    </head>
+    <body>
+        <h1>📋 Логи Somon.tj</h1>
+        
+        <div class="controls">
+            <button onclick="loadLogs()">🔄 Обновить</button>
+            <button onclick="autoRefresh()">⏰ Авто-обновление</button>
+            <button onclick="clearLogs()">🗑️ Очистить экран</button>
+            <select id="lineCount">
+                <option value="50">50 строк</option>
+                <option value="100" selected>100 строк</option>
+                <option value="200">200 строк</option>
+                <option value="500">500 строк</option>
+            </select>
+        </div>
+        
+        <div class="log-container" id="logContainer">
+            <div class="log-line">Загрузка логов...</div>
+        </div>
+
+        <script>
+            let autoRefreshInterval = null;
+            
+            function loadLogs() {
+                const lines = document.getElementById('lineCount').value;
+                fetch(`/api/logs?lines=${lines}`)
+                    .then(r => r.json())
+                    .then(data => {
+                        const container = document.getElementById('logContainer');
+                        if (data.success) {
+                            container.innerHTML = data.logs.map(line => {
+                                let className = 'info';
+                                if (line.includes('ERROR') || line.includes('❌')) className = 'error';
+                                else if (line.includes('WARNING') || line.includes('⚠️')) className = 'warning';
+                                
+                                return `<div class="log-line ${className}">${escapeHtml(line)}</div>`;
+                            }).join('');
+                            container.scrollTop = container.scrollHeight;
+                        } else {
+                            container.innerHTML = `<div class="log-line error">Ошибка: ${data.error || data.message}</div>`;
+                        }
+                    })
+                    .catch(e => {
+                        document.getElementById('logContainer').innerHTML = 
+                            `<div class="log-line error">Ошибка загрузки: ${e.message}</div>`;
+                    });
+            }
+            
+            function autoRefresh() {
+                if (autoRefreshInterval) {
+                    clearInterval(autoRefreshInterval);
+                    autoRefreshInterval = null;
+                    document.querySelector('button[onclick="autoRefresh()"]').textContent = '⏰ Авто-обновление';
+                } else {
+                    autoRefreshInterval = setInterval(loadLogs, 3000);
+                    document.querySelector('button[onclick="autoRefresh()"]').textContent = '⏹️ Остановить';
+                }
+            }
+            
+            function clearLogs() {
+                document.getElementById('logContainer').innerHTML = '<div class="log-line">Экран очищен. Нажмите "Обновить" для загрузки логов.</div>';
+            }
+            
+            function escapeHtml(text) {
+                const div = document.createElement('div');
+                div.textContent = text;
+                return div.innerHTML;
+            }
+            
+            // Загружаем логи при старте
+            loadLogs();
+        </script>
+    </body>
+    </html>
+    """)
+
 
 if __name__ == "__main__":
     import uvicorn
