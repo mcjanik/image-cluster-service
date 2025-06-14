@@ -18,7 +18,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="AIТовар.tj",
+app = FastAPI(title="Somon.tj",
               description="ИИ анализ товаров для объявлений")
 
 # CORS для развития
@@ -323,7 +323,7 @@ async def health_check():
         "api_key_configured": bool(api_key),
         "api_key_preview": f"{api_key[:10]}...{api_key[-4:]}" if api_key else None,
         "claude_status": claude_status,
-        "message": "🚀 AIТовар.tj API работает!"
+        "message": "🚀 Somon.tj API работает!"
     })
 
 
@@ -333,7 +333,7 @@ async def test_endpoint():
     return JSONResponse({
         "message": "✅ API работает!",
         "timestamp": "2025-06-14",
-        "service": "AIТовар.tj"
+        "service": "Somon.tj"
     })
 
 
@@ -350,7 +350,7 @@ async def debug_page():
         <html>
         <head><title>Быстрая отладка</title></head>
         <body>
-            <h1>🔧 Быстрая отладка APIТовар.tj</h1>
+            <h1>🔧 Быстрая отладка Somon.tj</h1>
             <button onclick="fetch('/api/health').then(r=>r.json()).then(d=>alert(JSON.stringify(d,null,2)))">
                 Проверить API
             </button>
