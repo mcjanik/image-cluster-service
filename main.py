@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Request
+from fastapi import FastAPI, UploadFile, File, Request, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,6 +8,11 @@ import base64
 import anthropic
 import json
 from typing import List
+import logging
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="AIТовар.tj", description="ИИ анализ товаров для объявлений")
 
@@ -63,25 +68,25 @@ def calculate_api_cost(image_size_bytes: int, response_text: str) -> dict:
 def analyze_image_with_claude(image_data: bytes, filename: str) -> tuple[str, dict]:
     """Анализирует изображение с помощью Claude и возвращает описание + стоимость"""
     try:
-        print(f"🔍 НАЧИНАЕМ АНАЛИЗ ИЗОБРАЖЕНИЯ: {filename}")
+        logger.info(f"🔍 НАЧИНАЕМ АНАЛИЗ ИЗОБРАЖЕНИЯ: {filename}")
         
         # Проверяем что API ключ настроен
         api_key = os.getenv("ANTHROPIC_API_KEY")
         if not api_key:
             error_msg = "❌ API ключ Anthropic не настроен в переменных окружения"
-            print(error_msg)
+            logger.error(error_msg)
             cost_info = calculate_api_cost(len(image_data), error_msg)
             return error_msg, cost_info
         
-        print(f"✅ API ключ найден: {api_key[:15]}...{api_key[-4:]}")
+        logger.info(f"✅ API ключ найден: {api_key[:15]}...{api_key[-4:]}")
         
         # Инициализация клиента
         client = anthropic.Anthropic(api_key=api_key)
         
         # Кодируем изображение в base64
-        print("🔄 Кодируем изображение...")
+        logger.info("🔄 Кодируем изображение...")
         image_base64 = base64.b64encode(image_data).decode('utf-8')
-        print(f"✅ Base64 готов, длина: {len(image_base64)} символов")
+        logger.info(f"✅ Base64 готов, длина: {len(image_base64)} символов")
         
         # Определяем MIME тип
         file_extension = filename.lower().split('.')[-1] if '.' in filename else 'jpg'
@@ -93,9 +98,9 @@ def analyze_image_with_claude(image_data: bytes, filename: str) -> tuple[str, di
             'webp': 'image/webp'
         }
         mime_type = mime_type_map.get(file_extension, 'image/jpeg')
-        print(f"📎 MIME тип: {mime_type}")
+        logger.info(f"📎 MIME тип: {mime_type}")
         
-        print("🚀 ОТПРАВЛЯЕМ ЗАПРОС В CLAUDE API...")
+        logger.info("🚀 ОТПРАВЛЯЕМ ЗАПРОС В CLAUDE API...")
         
         # Отправляем запрос к Claude
         message = client.messages.create(
@@ -143,31 +148,52 @@ def analyze_image_with_claude(image_data: bytes, filename: str) -> tuple[str, di
         )
         
         description = message.content[0].text
-        print(f"✅ ПОЛУЧЕН ОТВЕТ ОТ CLAUDE! Длина: {len(description)} символов")
+        logger.info(f"✅ ПОЛУЧЕН ОТВЕТ ОТ CLAUDE! Длина: {len(description)} символов")
         
         # Расчет стоимости
         cost_info = calculate_api_cost(len(image_data), description)
-        print(f"💰 Стоимость запроса: ₽{cost_info['total_cost_rub']}")
+        logger.info(f"💰 Стоимость запроса: ₽{cost_info['total_cost_rub']}")
         
         return description, cost_info
         
     except Exception as e:
         error_msg = f"❌ ОШИБКА: {str(e)}"
-        print(error_msg)
+        logger.error(error_msg)
         cost_info = calculate_api_cost(len(image_data), error_msg)
         return error_msg, cost_info
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
     """Главная страница с React приложением"""
-    return FileResponse('static/index.html')
+    try:
+        return FileResponse('static/index.html')
+    except Exception as e:
+        logger.error(f"Ошибка загрузки главной страницы: {e}")
+        return HTMLResponse("""
+        <!DOCTYPE html>
+        <html>
+        <head><title>Ошибка</title></head>
+        <body>
+            <h1>Ошибка загрузки</h1>
+            <p>Файл index.html не найден</p>
+            <p>Убедитесь что файл static/index.html существует</p>
+        </body>
+        </html>
+        """, status_code=500)
 
 @app.post("/api/analyze-single")
 async def analyze_single_image(file: UploadFile = File(...)):
     """Анализ одного изображения"""
     try:
+        logger.info(f"📥 Получен файл для анализа: {file.filename}")
+        
+        # Проверяем тип файла
+        if not file.content_type.startswith('image/'):
+            raise HTTPException(status_code=400, detail="Файл должен быть изображением")
+        
         # Читаем файл
         contents = await file.read()
+        logger.info(f"📂 Размер файла: {len(contents)} байт")
         
         # Временные размеры изображения (без PIL)
         width, height = 800, 600
@@ -193,6 +219,7 @@ async def analyze_single_image(file: UploadFile = File(...)):
         })
         
     except Exception as e:
+        logger.error(f"❌ Ошибка анализа одного изображения: {e}")
         return JSONResponse({
             "success": False,
             "error": str(e)
@@ -202,10 +229,22 @@ async def analyze_single_image(file: UploadFile = File(...)):
 async def analyze_multiple_images(files: List[UploadFile] = File(...)):
     """Анализ нескольких изображений"""
     try:
+        logger.info(f"📥 Получено {len(files)} файлов для анализа")
+        
+        if len(files) > 10:
+            raise HTTPException(status_code=400, detail="Максимум 10 файлов за раз")
+        
         results = []
         total_cost_rub = 0
         
-        for file in files:
+        for i, file in enumerate(files):
+            logger.info(f"🔄 Обрабатываем файл {i+1}/{len(files)}: {file.filename}")
+            
+            # Проверяем тип файла
+            if not file.content_type.startswith('image/'):
+                logger.warning(f"⚠️ Пропускаем файл {file.filename} - не изображение")
+                continue
+            
             # Читаем файл
             contents = await file.read()
             
@@ -231,6 +270,8 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                 "api_cost": cost_info
             })
         
+        logger.info(f"✅ Анализ завершен! Обработано {len(results)} изображений")
+        
         return JSONResponse({
             "success": True,
             "results": results,
@@ -244,6 +285,7 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
         })
         
     except Exception as e:
+        logger.error(f"❌ Ошибка анализа множественных изображений: {e}")
         return JSONResponse({
             "success": False,
             "error": str(e)
@@ -256,9 +298,20 @@ async def health_check():
     return JSONResponse({
         "status": "healthy",
         "api_key_configured": bool(api_key),
-        "api_key_preview": f"{api_key[:10]}...{api_key[-4:]}" if api_key else None
+        "api_key_preview": f"{api_key[:10]}...{api_key[-4:]}" if api_key else None,
+        "message": "🚀 AIТовар.tj API работает!"
+    })
+
+@app.get("/api/test")
+async def test_endpoint():
+    """Простой тестовый эндпоинт"""
+    return JSONResponse({
+        "message": "✅ API работает!",
+        "timestamp": "2025-06-14",
+        "service": "AIТовар.tj"
     })
 
 if __name__ == "__main__":
     import uvicorn
+    logger.info("🚀 Запускаем сервер AIТовар.tj...")
     uvicorn.run(app, host="0.0.0.0", port=8000)
