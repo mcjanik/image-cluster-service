@@ -281,7 +281,7 @@ const PhotoListingApp = () => {
     </div>
   );
 
-  // Компонент показа расходов
+
 
 
   const handleSingleUpload = async (file) => {
@@ -508,8 +508,8 @@ const PhotoListingApp = () => {
             <div className="bg-white rounded-lg border p-4 flex items-center">
               <Activity className="w-8 h-8 text-orange-500 mr-3 flex-shrink-0" />
               <div>
-                <h3 className="font-medium text-gray-800 text-sm">Контроль расходов</h3>
-                <p className="text-gray-600 text-xs">Отслеживайте стоимость каждого анализа</p>
+                <h3 className="font-medium text-gray-800 text-sm">Быстрый анализ</h3>
+                <p className="text-gray-600 text-xs">Мгновенное создание описаний товаров</p>
               </div>
             </div>
 
@@ -545,7 +545,7 @@ const PhotoListingApp = () => {
         </div>
 
         <div className="p-4">
-          <ApiCostDisplay />
+
 
           <div className="bg-white rounded-lg border p-4 mb-4">
             <h2 className="text-base font-medium text-gray-800 mb-3">Продвижение объявлений</h2>
@@ -577,7 +577,7 @@ const PhotoListingApp = () => {
               </div>
               <div className="border-t pt-2">
                 <div className="flex justify-between">
-                  <span className="font-medium text-gray-800">Общая стоимость:</span>
+                  <span className="font-medium text-gray-800">Общая стоимость размещения:</span>
                   <span className="font-bold text-orange-500">{stats.total} сомони</span>
                 </div>
               </div>
@@ -610,7 +610,7 @@ const PhotoListingApp = () => {
       </div>
 
       <div className="p-4">
-        <ApiCostDisplay />
+
 
         <div className="space-y-4 mb-6">
           {results.map((item) => (
