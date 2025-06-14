@@ -2,7 +2,6 @@ from fastapi import FastAPI, UploadFile, File, Request
 from fastapi.responses import HTMLResponse, FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
 import io
 import os
 import base64
@@ -170,9 +169,8 @@ async def analyze_single_image(file: UploadFile = File(...)):
         # Читаем файл
         contents = await file.read()
         
-        # Получаем размеры изображения
-        image = Image.open(io.BytesIO(contents))
-        width, height = image.size
+        # Временные размеры изображения (без PIL)
+        width, height = 800, 600
         
         # Анализируем с Claude
         description, cost_info = analyze_image_with_claude(contents, file.filename)
@@ -211,9 +209,8 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
             # Читаем файл
             contents = await file.read()
             
-            # Получаем размеры изображения
-            image = Image.open(io.BytesIO(contents))
-            width, height = image.size
+            # Временные размеры изображения (без PIL)
+            width, height = 800, 600
             
             # Анализируем с Claude
             description, cost_info = analyze_image_with_claude(contents, file.filename)
