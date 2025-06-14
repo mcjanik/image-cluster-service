@@ -40,7 +40,7 @@ const PhotoListingApp = () => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    
+
     const files = Array.from(e.dataTransfer.files);
     handleFiles(files);
   };
@@ -52,7 +52,7 @@ const PhotoListingApp = () => {
 
   const handleFiles = (files) => {
     const imageFiles = files.filter(file => file.type.startsWith('image/'));
-    
+
     imageFiles.forEach(file => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -73,10 +73,10 @@ const PhotoListingApp = () => {
 
   const processImages = async () => {
     setProcessing(true);
-    
+
     // Симуляция обработки (здесь будет API вызов с фото + userDescription)
     await new Promise(resolve => setTimeout(resolve, 3000));
-    
+
     // Создаем результаты на основе загруженных фотографий (правильная привязка)
     // В реальном приложении сюда придут данные из LLM API, который обработает фото + текст
     const mockResults = uploadedImages.map((img, index) => {
@@ -87,15 +87,15 @@ const PhotoListingApp = () => {
         { main: 'Все для дома', sub: 'Бытовая техника', title: 'Бытовая техника', desc: 'Качественная техника для дома в хорошем состоянии.', price: '400', brand: 'Samsung' },
         { main: 'Транспорт', sub: 'Автозапчасти', title: 'Автозапчасти', desc: 'Оригинальные запчасти в отличном состоянии.', price: '150', brand: 'Original' }
       ];
-      
+
       const template = categories_templates[index % categories_templates.length];
-      
+
       // В реальном приложении здесь LLM учтет userDescription и создаст более точное описание
       let enhancedDescription = template.desc;
       if (userDescription) {
         enhancedDescription += ' ' + 'Дополнительные детали указаны владельцем.';
       }
-      
+
       return {
         id: img.id, // Используем ID изображения для правильной привязки
         images: [img.preview], // Правильно привязываем конкретное фото
@@ -111,14 +111,14 @@ const PhotoListingApp = () => {
         userInput: userDescription // Сохраняем пользовательский ввод для API
       };
     });
-    
+
     setResults(mockResults);
     setProcessing(false);
     setCurrentStep('results');
   };
 
   const updateResult = (id, field, value) => {
-    setResults(prev => prev.map(item => 
+    setResults(prev => prev.map(item =>
       item.id === id ? { ...item, [field]: value } : item
     ));
   };
@@ -138,7 +138,7 @@ const PhotoListingApp = () => {
   };
 
   const updatePromotion = (id, promotionType, days) => {
-    setPublishedItems(prev => prev.map(item => 
+    setPublishedItems(prev => prev.map(item =>
       item.id === id ? { ...item, promotionType, days } : item
     ));
   };
@@ -151,13 +151,13 @@ const PhotoListingApp = () => {
       vip: publishedItems.filter(item => item.promotionType === 'vip').length,
       total: 0
     };
-    
+
     stats.total = publishedItems.reduce((sum, item) => {
       if (item.promotionType === 'top') return sum + (5 * item.days);
       if (item.promotionType === 'vip') return sum + (10 * item.days);
       return sum;
     }, 0);
-    
+
     return stats;
   };
 
@@ -198,11 +198,10 @@ const PhotoListingApp = () => {
           {/* Upload Area */}
           <div className="bg-white rounded-lg border p-4 mb-6">
             <div
-              className={`relative border-2 border-dashed rounded-lg p-6 transition-all ${
-                dragActive 
-                  ? 'border-orange-500 bg-orange-50' 
+              className={`relative border-2 border-dashed rounded-lg p-6 transition-all ${dragActive
+                  ? 'border-orange-500 bg-orange-50'
                   : 'border-gray-300'
-              }`}
+                }`}
               onDragEnter={handleDrag}
               onDragLeave={handleDrag}
               onDragOver={handleDrag}
@@ -216,7 +215,7 @@ const PhotoListingApp = () => {
                 onChange={handleFileSelect}
                 className="hidden"
               />
-              
+
               <div className="text-center">
                 <Upload className="w-10 h-10 text-gray-400 mx-auto mb-3" />
                 <h3 className="text-base font-medium text-gray-700 mb-2">
@@ -315,7 +314,7 @@ const PhotoListingApp = () => {
                 <p className="text-gray-600 text-xs">Автоматически определяем что на фото</p>
               </div>
             </div>
-            
+
             <div className="bg-white rounded-lg border p-4 flex items-center">
               <Save className="w-8 h-8 text-orange-500 mr-3 flex-shrink-0" />
               <div>
@@ -323,7 +322,7 @@ const PhotoListingApp = () => {
                 <p className="text-gray-600 text-xs">Создаем подробные описания + ваши данные</p>
               </div>
             </div>
-            
+
             <div className="bg-white rounded-lg border p-4 flex items-center">
               <Plus className="w-8 h-8 text-orange-500 mr-3 flex-shrink-0" />
               <div>
@@ -331,7 +330,7 @@ const PhotoListingApp = () => {
                 <p className="text-gray-600 text-xs">Изменяйте перед публикацией</p>
               </div>
             </div>
-            
+
             {userDescription && (
               <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 flex items-center">
                 <div className="w-2 h-2 bg-orange-500 rounded-full mr-3 flex-shrink-0"></div>
@@ -349,7 +348,7 @@ const PhotoListingApp = () => {
 
   if (currentStep === 'promotion') {
     const stats = getPromotionStats();
-    
+
     return (
       <div className="min-h-screen bg-gray-50">
         {/* Mobile Header */}
@@ -403,7 +402,7 @@ const PhotoListingApp = () => {
             </div>
           </div>
 
-          <button 
+          <button
             onClick={() => alert('Объявления опубликованы!')}
             className="w-full bg-orange-500 text-white py-3 rounded-lg font-medium"
           >
@@ -433,13 +432,13 @@ const PhotoListingApp = () => {
         {/* Results */}
         <div className="space-y-4 mb-6">
           {results.map((item) => (
-            <ResultCard 
-              key={item.id} 
-              item={item} 
+            <ResultCard
+              key={item.id}
+              item={item}
               categories={categories}
               conditions={conditions}
               currencies={currencies}
-              onUpdate={updateResult} 
+              onUpdate={updateResult}
               onDelete={deleteResult}
               onPublish={publishItem}
             />
@@ -448,7 +447,7 @@ const PhotoListingApp = () => {
 
         {/* Actions */}
         {results.length > 0 && (
-          <button 
+          <button
             onClick={publishAllItems}
             className="w-full bg-orange-500 text-white py-3 rounded-lg font-medium"
           >
@@ -482,10 +481,10 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
       {/* Card Header */}
       <div className="p-4">
         <div className="flex">
-          <img 
-            src={item.images[0]} 
-            alt={formData.title} 
-            className="w-16 h-16 object-cover rounded mr-3 flex-shrink-0" 
+          <img
+            src={item.images[0]}
+            alt={formData.title}
+            className="w-16 h-16 object-cover rounded mr-3 flex-shrink-0"
           />
           <div className="flex-1 min-w-0">
             <input
@@ -602,13 +601,13 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
 
           {/* Actions */}
           <div className="flex space-x-2 pt-2">
-            <button 
+            <button
               onClick={() => onDelete(item.id)}
               className="flex-1 bg-red-50 text-red-600 py-2 rounded text-sm font-medium"
             >
               Удалить
             </button>
-            <button 
+            <button
               onClick={() => onPublish(formData)}
               className="flex-1 bg-orange-500 text-white py-2 rounded text-sm font-medium"
             >
@@ -646,29 +645,27 @@ const PromotionCard = ({ item, onUpdate }) => {
           <p className="text-xs text-gray-600">{item.price} {item.currency}</p>
         </div>
       </div>
-      
+
       <div className="space-y-3">
         {promotionOptions.map((option) => {
           const IconComponent = option.icon;
           const isSelected = promotionType === option.type;
-          
+
           return (
             <div
               key={option.type}
-              className={`border rounded-lg p-3 cursor-pointer transition-all ${
-                isSelected 
-                  ? 'border-orange-500 bg-orange-50' 
+              className={`border rounded-lg p-3 cursor-pointer transition-all ${isSelected
+                  ? 'border-orange-500 bg-orange-50'
                   : 'border-gray-200'
-              }`}
+                }`}
               onClick={() => handlePromotionChange(option.type, option.type === 'standard' ? 0 : days)}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
-                  <IconComponent className={`w-4 h-4 mr-2 ${
-                    option.type === 'standard' ? 'text-gray-500' :
-                    option.type === 'top' ? 'text-yellow-500' :
-                    'text-purple-500'
-                  }`} />
+                  <IconComponent className={`w-4 h-4 mr-2 ${option.type === 'standard' ? 'text-gray-500' :
+                      option.type === 'top' ? 'text-yellow-500' :
+                        'text-purple-500'
+                    }`} />
                   <div>
                     <span className="font-medium text-sm">{option.name}</span>
                     <p className="text-xs text-gray-600">{option.desc}</p>
@@ -680,7 +677,7 @@ const PromotionCard = ({ item, onUpdate }) => {
                   </p>
                 </div>
               </div>
-              
+
               {isSelected && option.type !== 'standard' && (
                 <div className="mt-2">
                   <select
