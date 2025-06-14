@@ -1,8 +1,8 @@
 const { useState, useRef, useEffect } = React;
 
 // Иконки из Lucide
-const { 
-  Upload, Camera, Image, Save, X, Plus, Trash2, Clock, 
+const {
+  Upload, Camera, Image, Save, X, Plus, Trash2, Clock,
   Star, Crown, Eye, Menu, ArrowLeft, DollarSign, Activity,
   Zap, CheckCircle, AlertCircle
 } = lucide;
@@ -15,10 +15,13 @@ const PhotoListingApp = () => {
   const [results, setResults] = useState([]);
   const [publishedItems, setPublishedItems] = useState([]);
   const [userDescription, setUserDescription] = useState('');
-  const [apiCosts, setApiCosts] = useState([]);
-  const [totalSpent, setTotalSpent] = useState(0);
-  const [sessionCosts, setSessionCosts] = useState([]);
+
   const fileInputRef = useRef(null);
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [activeTab, setActiveTab] = useState('upload');
+  const [showInstructions, setShowInstructions] = useState(true);
 
   const categories = {
     'Недвижимость': ['Квартиры', 'Дома', 'Дачи', 'Коммерческая недвижимость', 'Земельные участки', 'Гаражи'],
@@ -34,24 +37,20 @@ const PhotoListingApp = () => {
   const conditions = ['Новое', 'Отличное', 'Хорошее', 'Удовлетворительное', 'На запчасти'];
   const currencies = ['сомони', 'доллар', 'евро'];
 
-  // Загрузка сохраненных данных при запуске
+
+
   useEffect(() => {
-    const savedCosts = localStorage.getItem('ai_tovar_costs');
-    if (savedCosts) {
-      const costs = JSON.parse(savedCosts);
-      setApiCosts(costs);
-      setTotalSpent(costs.reduce((sum, cost) => sum + cost.total_cost_rub, 0));
+    // Загружаем результаты из localStorage
+    const savedResults = localStorage.getItem('ai_tovar_results');
+    if (savedResults) {
+      setResults(JSON.parse(savedResults));
     }
   }, []);
 
-  // Сохранение расходов
-  const saveCosts = (newCosts) => {
-    const allCosts = [...apiCosts, ...newCosts];
-    setApiCosts(allCosts);
-    localStorage.setItem('ai_tovar_costs', JSON.stringify(allCosts));
-    
-    const newTotal = allCosts.reduce((sum, cost) => sum + cost.total_cost_rub, 0);
-    setTotalSpent(newTotal);
+  const saveResults = (newResults) => {
+    const allResults = [...results, ...newResults];
+    setResults(allResults);
+    localStorage.setItem('ai_tovar_results', JSON.stringify(allResults));
   };
 
   const handleDrag = (e) => {
@@ -68,7 +67,7 @@ const PhotoListingApp = () => {
     e.preventDefault();
     e.stopPropagation();
     setDragActive(false);
-    
+
     const files = Array.from(e.dataTransfer.files);
     handleFiles(files);
   };
@@ -80,7 +79,7 @@ const PhotoListingApp = () => {
 
   const handleFiles = (files) => {
     const imageFiles = files.filter(file => file.type.startsWith('image/'));
-    
+
     imageFiles.forEach(file => {
       const reader = new FileReader();
       reader.onload = (e) => {
@@ -102,27 +101,26 @@ const PhotoListingApp = () => {
 
   const processImages = async () => {
     setProcessing(true);
-    setSessionCosts([]);
-    
+
     try {
       // Подготавливаем FormData для отправки
       const formData = new FormData();
       uploadedImages.forEach(img => {
         formData.append('files', img.file);
       });
-      
+
       // Отправляем запрос к FastAPI
       const response = await fetch('/api/analyze-multiple', {
         method: 'POST',
         body: formData
       });
-      
+
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
-      
+
       const data = await response.json();
-      
+
       if (data.success) {
         // Обрабатываем результаты
         const processedResults = data.results.map(result => ({
@@ -138,30 +136,22 @@ const PhotoListingApp = () => {
           condition: extractCondition(result.description),
           location: 'Душанбе',
           userInput: userDescription,
-          apiCost: result.api_cost,
+
           filename: result.filename,
           width: result.width,
           height: result.height,
           size_bytes: result.size_bytes
         }));
-        
+
         setResults(processedResults);
-        
-        // Сохраняем расходы
-        const newCosts = data.results.map(result => ({
-          ...result.api_cost,
-          timestamp: new Date().toISOString(),
-          filename: result.filename
-        }));
-        
-        setSessionCosts(newCosts);
-        saveCosts(newCosts);
-        
+
+
+
         setCurrentStep('results');
       } else {
         throw new Error(data.error || 'Неизвестная ошибка');
       }
-      
+
     } catch (error) {
       console.error('Ошибка обработки:', error);
       alert(`Ошибка обработки: ${error.message}`);
@@ -193,7 +183,7 @@ const PhotoListingApp = () => {
       'Транспорт': ['автомобиль', 'машина', 'мотоцикл', 'запчасти'],
       'Все для дома': ['мебель', 'стол', 'стул', 'диван', 'кровать']
     };
-    
+
     const lowerDesc = description.toLowerCase();
     for (let [category, keywords] of Object.entries(categoryKeywords)) {
       if (keywords.some(keyword => lowerDesc.includes(keyword))) {
@@ -241,7 +231,7 @@ const PhotoListingApp = () => {
   };
 
   const updateResult = (id, field, value) => {
-    setResults(prev => prev.map(item => 
+    setResults(prev => prev.map(item =>
       item.id === id ? { ...item, [field]: value } : item
     ));
   };
@@ -261,7 +251,7 @@ const PhotoListingApp = () => {
   };
 
   const updatePromotion = (id, promotionType, days) => {
-    setPublishedItems(prev => prev.map(item => 
+    setPublishedItems(prev => prev.map(item =>
       item.id === id ? { ...item, promotionType, days } : item
     ));
   };
@@ -273,13 +263,13 @@ const PhotoListingApp = () => {
       vip: publishedItems.filter(item => item.promotionType === 'vip').length,
       total: 0
     };
-    
+
     stats.total = publishedItems.reduce((sum, item) => {
       if (item.promotionType === 'top') return sum + (5 * item.days);
       if (item.promotionType === 'vip') return sum + (10 * item.days);
       return sum;
     }, 0);
-    
+
     return stats;
   };
 
@@ -292,43 +282,78 @@ const PhotoListingApp = () => {
   );
 
   // Компонент показа расходов
-  const ApiCostDisplay = () => {
-    const todayCosts = sessionCosts;
-    const todayTotal = todayCosts.reduce((sum, cost) => sum + cost.total_cost_rub, 0);
 
-    return (
-      <div className="bg-gradient-to-r from-blue-50 to-purple-50 rounded-lg border border-blue-200 p-4 mb-4">
-        <div className="flex items-center mb-3">
-          <DollarSign className="w-5 h-5 text-blue-600 mr-2" />
-          <h3 className="font-medium text-blue-800">Расходы на ИИ анализ</h3>
-        </div>
-        <div className="grid grid-cols-2 gap-3 text-sm">
-          <div className="bg-white rounded p-2">
-            <div className="text-blue-600 font-medium">Эта сессия</div>
-            <div className="text-lg font-bold text-blue-800">₽{todayTotal.toFixed(3)}</div>
-            {todayCosts.length > 0 && (
-              <div className="text-xs text-gray-600">{todayCosts.length} анализов</div>
-            )}
-          </div>
-          <div className="bg-white rounded p-2">
-            <div className="text-purple-600 font-medium">Всего потрачено</div>
-            <div className="text-lg font-bold text-purple-800">₽{totalSpent.toFixed(2)}</div>
-            <div className="text-xs text-gray-600">{apiCosts.length} всего</div>
-          </div>
-        </div>
-        {todayCosts.length > 0 && (
-          <div className="mt-3 p-2 bg-white rounded text-xs">
-            <div className="font-medium text-gray-700 mb-1">Детали последней сессии:</div>
-            <div className="text-gray-600">
-              Токенов использовано: {todayCosts.reduce((sum, c) => sum + c.image_tokens + c.output_tokens, 0).toLocaleString()}
-            </div>
-            <div className="text-gray-600">
-              Средняя стоимость за анализ: ₽{(todayTotal / todayCosts.length).toFixed(3)}
-            </div>
-          </div>
-        )}
-      </div>
-    );
+
+  const handleSingleUpload = async (file) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+
+      const response = await fetch('/api/analyze-single', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Ошибка анализа');
+      }
+
+      const result = {
+        id: data.result.id,
+        filename: data.result.filename,
+        description: data.result.description,
+        image: data.result.image_preview,
+        timestamp: new Date().toISOString(),
+      };
+
+      setResults([result, ...results]);
+      saveResults([result]);
+
+      return result;
+
+    } catch (error) {
+      console.error('Ошибка загрузки:', error);
+      throw error;
+    }
+  };
+
+  const handleMultipleUpload = async (files) => {
+    try {
+      const formData = new FormData();
+      files.forEach(file => {
+        formData.append('files', file);
+      });
+
+      const response = await fetch('/api/analyze-multiple', {
+        method: 'POST',
+        body: formData
+      });
+
+      const data = await response.json();
+
+      if (!data.success) {
+        throw new Error(data.error || 'Ошибка анализа');
+      }
+
+      const newResults = data.results.map(result => ({
+        id: result.id,
+        filename: result.filename,
+        description: result.description,
+        image: result.image_preview,
+        timestamp: new Date().toISOString(),
+      }));
+
+      setResults([...newResults, ...results]);
+      saveResults(newResults);
+
+      return newResults;
+
+    } catch (error) {
+      console.error('Ошибка множественной загрузки:', error);
+      throw error;
+    }
   };
 
   if (currentStep === 'upload') {
@@ -354,16 +379,14 @@ const PhotoListingApp = () => {
             </p>
           </div>
 
-          {/* Показ расходов на главной */}
-          {totalSpent > 0 && <ApiCostDisplay />}
+
 
           <div className="bg-white rounded-lg border p-4 mb-6">
             <div
-              className={`relative border-2 border-dashed rounded-lg p-6 transition-all ${
-                dragActive 
-                  ? 'border-orange-500 bg-orange-50' 
-                  : 'border-gray-300'
-              }`}
+              className={`relative border-2 border-dashed rounded-lg p-6 transition-all ${dragActive
+                ? 'border-orange-500 bg-orange-50'
+                : 'border-gray-300'
+                }`}
               onDragEnter={handleDrag}
               onDragLeave={handleDrag}
               onDragOver={handleDrag}
@@ -377,7 +400,7 @@ const PhotoListingApp = () => {
                 onChange={handleFileSelect}
                 className="hidden"
               />
-              
+
               <div className="text-center">
                 <Upload className="w-10 h-10 text-gray-400 mx-auto mb-3" />
                 <h3 className="text-base font-medium text-gray-700 mb-2">
@@ -401,9 +424,6 @@ const PhotoListingApp = () => {
                   <h3 className="text-sm font-medium text-gray-700">
                     Загружено: {uploadedImages.length} фото
                   </h3>
-                  <div className="text-xs text-blue-600">
-                    ~₽{(uploadedImages.length * 1.5).toFixed(2)} за анализ
-                  </div>
                 </div>
                 <div className="grid grid-cols-3 gap-2">
                   {uploadedImages.map((image) => (
@@ -476,7 +496,7 @@ const PhotoListingApp = () => {
                 <p className="text-gray-600 text-xs">Мощный ИИ автоматически определяет товары</p>
               </div>
             </div>
-            
+
             <div className="bg-white rounded-lg border p-4 flex items-center">
               <Save className="w-8 h-8 text-orange-500 mr-3 flex-shrink-0" />
               <div>
@@ -484,7 +504,7 @@ const PhotoListingApp = () => {
                 <p className="text-gray-600 text-xs">ИИ создает подробные описания для продажи</p>
               </div>
             </div>
-            
+
             <div className="bg-white rounded-lg border p-4 flex items-center">
               <Activity className="w-8 h-8 text-orange-500 mr-3 flex-shrink-0" />
               <div>
@@ -510,7 +530,7 @@ const PhotoListingApp = () => {
 
   if (currentStep === 'promotion') {
     const stats = getPromotionStats();
-    
+
     return (
       <div className="min-h-screen bg-gray-50 mobile-container">
         <div className="bg-white border-b border-gray-200 p-4">
@@ -526,7 +546,7 @@ const PhotoListingApp = () => {
 
         <div className="p-4">
           <ApiCostDisplay />
-          
+
           <div className="bg-white rounded-lg border p-4 mb-4">
             <h2 className="text-base font-medium text-gray-800 mb-3">Продвижение объявлений</h2>
             <p className="text-sm text-gray-600 mb-4">
@@ -564,7 +584,7 @@ const PhotoListingApp = () => {
             </div>
           </div>
 
-          <button 
+          <button
             onClick={() => alert('Объявления опубликованы на AIТовар.tj!')}
             className="w-full bg-orange-500 text-white py-3 rounded-lg font-medium hover:bg-orange-600 transition-colors"
           >
@@ -591,16 +611,16 @@ const PhotoListingApp = () => {
 
       <div className="p-4">
         <ApiCostDisplay />
-        
+
         <div className="space-y-4 mb-6">
           {results.map((item) => (
-            <ResultCard 
-              key={item.id} 
-              item={item} 
+            <ResultCard
+              key={item.id}
+              item={item}
               categories={categories}
               conditions={conditions}
               currencies={currencies}
-              onUpdate={updateResult} 
+              onUpdate={updateResult}
               onDelete={deleteResult}
               onPublish={publishItem}
             />
@@ -608,7 +628,7 @@ const PhotoListingApp = () => {
         </div>
 
         {results.length > 0 && (
-          <button 
+          <button
             onClick={publishAllItems}
             className="w-full bg-orange-500 text-white py-3 rounded-lg font-medium hover:bg-orange-600 transition-colors"
           >
@@ -641,10 +661,10 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
     <div className="bg-white rounded-lg border product-card">
       <div className="p-4">
         <div className="flex">
-          <img 
-            src={item.images[0]} 
-            alt={formData.title} 
-            className="w-16 h-16 object-cover rounded mr-3 flex-shrink-0" 
+          <img
+            src={item.images[0]}
+            alt={formData.title}
+            className="w-16 h-16 object-cover rounded mr-3 flex-shrink-0"
           />
           <div className="flex-1 min-w-0">
             <input
@@ -668,11 +688,7 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
               <span className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded text-xs">
                 {formData.mainCategory}
               </span>
-              {item.apiCost && (
-                <span className="bg-blue-50 text-blue-600 px-2 py-0.5 rounded text-xs">
-                  ₽{item.apiCost.total_cost_rub.toFixed(3)}
-                </span>
-              )}
+
             </div>
           </div>
           <button
@@ -686,21 +702,7 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
 
       {isExpanded && (
         <div className="px-4 pb-4 border-t border-gray-100 pt-4 space-y-3">
-          {/* Показ стоимости анализа */}
-          {item.apiCost && (
-            <div className="bg-blue-50 rounded p-3 text-xs">
-              <div className="font-medium text-blue-800 mb-2">Стоимость Claude AI анализа:</div>
-              <div className="grid grid-cols-2 gap-2 text-blue-700">
-                <div>Входящие токены: {item.apiCost.image_tokens?.toLocaleString()}</div>
-                <div>Исходящие токены: {item.apiCost.output_tokens?.toLocaleString()}</div>
-                <div>Стоимость входа: ${item.apiCost.input_cost_usd?.toFixed(4)}</div>
-                <div>Стоимость выхода: ${item.apiCost.output_cost_usd?.toFixed(4)}</div>
-              </div>
-              <div className="font-bold text-blue-800 mt-2 text-center">
-                Итого: ₽{item.apiCost.total_cost_rub?.toFixed(4)} (${item.apiCost.total_cost_usd?.toFixed(4)})
-              </div>
-            </div>
-          )}
+
 
           <div>
             <label className="block text-xs text-gray-600 mb-1">Категория</label>
@@ -777,13 +779,13 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
           </div>
 
           <div className="flex space-x-2 pt-2">
-            <button 
+            <button
               onClick={() => onDelete(item.id)}
               className="flex-1 bg-red-50 text-red-600 py-2 rounded text-sm font-medium hover:bg-red-100 transition-colors"
             >
               Удалить
             </button>
-            <button 
+            <button
               onClick={() => onPublish(formData)}
               className="flex-1 bg-orange-500 text-white py-2 rounded text-sm font-medium hover:bg-orange-600 transition-colors"
             >
@@ -820,37 +822,31 @@ const PromotionCard = ({ item, onUpdate }) => {
           <h3 className="font-medium text-gray-800 text-sm">{item.title}</h3>
           <div className="flex items-center justify-between">
             <p className="text-xs text-gray-600">{item.price} {item.currency}</p>
-            {item.apiCost && (
-              <span className="text-xs text-blue-600">
-                ИИ: ₽{item.apiCost.total_cost_rub?.toFixed(3)}
-              </span>
-            )}
+
           </div>
         </div>
       </div>
-      
+
       <div className="space-y-3">
         {promotionOptions.map((option) => {
           const IconComponent = option.icon;
           const isSelected = promotionType === option.type;
-          
+
           return (
             <div
               key={option.type}
-              className={`border rounded-lg p-3 cursor-pointer transition-all ${
-                isSelected 
-                  ? 'border-orange-500 bg-orange-50' 
-                  : 'border-gray-200 hover:border-gray-300'
-              }`}
+              className={`border rounded-lg p-3 cursor-pointer transition-all ${isSelected
+                ? 'border-orange-500 bg-orange-50'
+                : 'border-gray-200 hover:border-gray-300'
+                }`}
               onClick={() => handlePromotionChange(option.type, option.type === 'standard' ? 0 : days)}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
-                  <IconComponent className={`w-4 h-4 mr-2 ${
-                    option.type === 'standard' ? 'text-gray-500' :
+                  <IconComponent className={`w-4 h-4 mr-2 ${option.type === 'standard' ? 'text-gray-500' :
                     option.type === 'top' ? 'text-yellow-500' :
-                    'text-purple-500'
-                  }`} />
+                      'text-purple-500'
+                    }`} />
                   <div>
                     <span className="font-medium text-sm">{option.name}</span>
                     <p className="text-xs text-gray-600">{option.desc}</p>
@@ -862,7 +858,7 @@ const PromotionCard = ({ item, onUpdate }) => {
                   </p>
                 </div>
               </div>
-              
+
               {isSelected && option.type !== 'standard' && (
                 <div className="mt-2">
                   <select
