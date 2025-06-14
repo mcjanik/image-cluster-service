@@ -144,6 +144,145 @@ def analyze_image_with_claude(image_data: bytes, filename: str) -> str:
         return error_msg
 
 
+def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> List[str]:
+    """Анализирует batch изображений с помощью Claude и возвращает описания"""
+    try:
+        logger.info(f"🔍 НАЧИНАЕМ BATCH АНАЛИЗ: {len(image_batch)} изображений")
+
+        # Проверяем что API ключ настроен
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            error_msg = "❌ API ключ Anthropic не настроен в переменных окружения"
+            logger.error(error_msg)
+            return [error_msg] * len(image_batch)
+
+        logger.info(f"✅ API ключ найден: {api_key[:15]}...{api_key[-4:]}")
+
+        # Инициализация клиента
+        logger.info("🔧 Инициализируем Anthropic клиент...")
+        client = anthropic.Anthropic(
+            api_key=api_key,
+            timeout=60.0
+        )
+
+        # Подготавливаем batch изображений
+        image_contents = []
+        for img_data, filename in image_batch:
+            # Проверяем размер
+            if len(img_data) > 20 * 1024 * 1024:  # 20MB лимит
+                logger.warning(
+                    f"❌ Пропускаем {filename} - слишком большой: {len(img_data)/1024/1024:.1f}MB")
+                continue
+
+            # Кодируем в base64
+            image_base64 = base64.b64encode(img_data).decode('utf-8')
+
+            # Определяем MIME тип
+            file_extension = filename.lower().split(
+                '.')[-1] if '.' in filename else 'jpg'
+            mime_type_map = {
+                'jpg': 'image/jpeg',
+                'jpeg': 'image/jpeg',
+                'png': 'image/png',
+                'gif': 'image/gif',
+                'webp': 'image/webp'
+            }
+            mime_type = mime_type_map.get(file_extension, 'image/jpeg')
+
+            # Добавляем в контент
+            image_contents.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime_type,
+                    "data": image_base64,
+                }
+            })
+
+        if not image_contents:
+            return []
+
+        logger.info("🚀 ОТПРАВЛЯЕМ BATCH ЗАПРОС В CLAUDE API...")
+
+        # Формируем промпт для batch анализа
+        batch_prompt = """Проанализируйте эти изображения товаров для создания объявлений о продаже на классифайд платформе. 
+Отвечайте ТОЛЬКО на русском языке.
+
+Для КАЖДОГО изображения предоставьте структурированный анализ в следующем формате:
+
+=== ИЗОБРАЖЕНИЕ {N} ===
+
+🏷️ ТОВАР И КАТЕГОРИЯ:
+- Что это за товар/предмет
+- К какой категории относится (одежда, техника, мебель, автомобиль и т.д.)
+- Подкатегория товара
+
+📝 ДЕТАЛЬНОЕ ОПИСАНИЕ:
+- Материал, цвет, размер (если видно)
+- Состояние товара (новый/б/у, видимые повреждения/износ)
+- Особенности, характеристики, функции
+- Бренд или производитель (если различимо)
+- Комплектность (что входит в комплект)
+
+💰 ДЛЯ ОБЪЯВЛЕНИЯ:
+- Ключевые слова для поиска покупателями
+- Главные преимущества и особенности товара
+- На что обратить внимание покупателя
+- Рекомендуемая целевая аудитория
+
+=== КОНЕЦ ИЗОБРАЖЕНИЯ {N} ===
+
+Отвечайте структурированно, подробно, но лаконично. Фокусируйтесь на информации которая поможет продать товар."""
+
+        # Отправляем batch запрос к Claude
+        message = client.messages.create(
+            model="claude-3-5-sonnet-20241022",
+            max_tokens=4000,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        *image_contents,
+                        {
+                            "type": "text",
+                            "text": batch_prompt
+                        }
+                    ],
+                }
+            ],
+        )
+
+        # Разбираем ответ на отдельные описания
+        full_response = message.content[0].text
+        descriptions = []
+        current_desc = []
+
+        for line in full_response.split('\n'):
+            if line.startswith('=== ИЗОБРАЖЕНИЕ'):
+                if current_desc:
+                    descriptions.append('\n'.join(current_desc))
+                    current_desc = []
+            elif line.startswith('=== КОНЕЦ ИЗОБРАЖЕНИЯ'):
+                if current_desc:
+                    descriptions.append('\n'.join(current_desc))
+                    current_desc = []
+            else:
+                current_desc.append(line)
+
+        # Добавляем последнее описание если есть
+        if current_desc:
+            descriptions.append('\n'.join(current_desc))
+
+        logger.info(
+            f"✅ ПОЛУЧЕН BATCH ОТВЕТ ОТ CLAUDE! {len(descriptions)} описаний")
+        return descriptions
+
+    except Exception as e:
+        error_msg = f"❌ ОШИБКА BATCH АНАЛИЗА: {str(e)}"
+        logger.error(f"{error_msg}\nПолная ошибка: {traceback.format_exc()}")
+        return [error_msg] * len(image_batch)
+
+
 @app.get("/", response_class=HTMLResponse)
 async def root():
     """Главная страница с React приложением"""
@@ -226,59 +365,62 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
             raise HTTPException(
                 status_code=400, detail="Максимум 14 файлов за раз")
 
-        results = []
+        # Собираем все валидные изображения
+        image_batch = []
+        file_info = []  # Сохраняем информацию о файлах в том же порядке
 
-        for i, file in enumerate(files):
-            logger.info(
-                f"🔄 Обрабатываем файл {i+1}/{len(files)}: {file.filename} ({file.content_type})")
-
-            # Проверяем тип файла
+        for file in files:
             if not file.content_type or not file.content_type.startswith('image/'):
                 logger.warning(
-                    f"⚠️ Пропускаем файл {file.filename} - неверный тип: {file.content_type}")
+                    f"⚠️ Пропускаем {file.filename} - неверный тип: {file.content_type}")
                 continue
 
             try:
-                # Читаем файл
                 contents = await file.read()
-                logger.info(f"📂 Файл {file.filename}: {len(contents)} байт")
 
-                # Пропускаем слишком большие файлы
                 if len(contents) > 20 * 1024 * 1024:  # 20MB
                     logger.warning(
-                        f"⚠️ Пропускаем файл {file.filename} - слишком большой: {len(contents)/1024/1024:.1f}MB")
+                        f"⚠️ Пропускаем {file.filename} - слишком большой: {len(contents)/1024/1024:.1f}MB")
                     continue
 
-                # Временные размеры изображения (без PIL)
-                width, height = 800, 600
-
-                # Анализируем с Claude
-                description = analyze_image_with_claude(
-                    contents, file.filename)
-
-                # Кодируем изображение для возврата в браузер
-                image_base64 = base64.b64encode(contents).decode('utf-8')
-
-                results.append({
-                    "id": f"{file.filename}_{len(contents)}_{int(len(results))}",
-                    "filename": file.filename,
-                    "width": width,
-                    "height": height,
-                    "size_bytes": len(contents),
-                    "image_preview": f"data:image/{file.filename.split('.')[-1]};base64,{image_base64}",
-                    "description": description
+                image_batch.append((contents, file.filename))
+                file_info.append({
+                    'filename': file.filename,
+                    'content_type': file.content_type,
+                    'size': len(contents),
+                    'contents': contents  # Сохраняем для превью
                 })
-
-                logger.info(f"✅ Файл {file.filename} обработан успешно")
 
             except Exception as file_error:
                 logger.error(
-                    f"❌ Ошибка обработки файла {file.filename}: {file_error}\n{traceback.format_exc()}")
-                # Продолжаем обработку других файлов
+                    f"❌ Ошибка чтения файла {file.filename}: {file_error}")
                 continue
 
+        if not image_batch:
+            raise HTTPException(
+                status_code=400, detail="Нет валидных изображений для обработки")
+
+        # Batch анализ всех изображений
+        descriptions = analyze_images_batch_with_claude(image_batch)
+
+        # Формируем результаты
+        results = []
+        for i, (description, info) in enumerate(zip(descriptions, file_info)):
+            # Кодируем изображение для браузера
+            image_base64 = base64.b64encode(info['contents']).decode('utf-8')
+
+            results.append({
+                "id": f"{info['filename']}_{info['size']}_{i}",
+                "filename": info['filename'],
+                "width": 800,  # Временные значения
+                "height": 600,
+                "size_bytes": info['size'],
+                "image_preview": f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}",
+                "description": description
+            })
+
         logger.info(
-            f"✅ Анализ завершен! Обработано {len(results)} из {len(files)} изображений")
+            f"✅ Batch анализ завершен! Обработано {len(results)} изображений")
 
         return JSONResponse({
             "success": True,
@@ -292,8 +434,7 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
         })
 
     except Exception as e:
-        logger.error(
-            f"❌ Ошибка анализа множественных изображений: {e}\n{traceback.format_exc()}")
+        logger.error(f"❌ Ошибка batch анализа: {e}\n{traceback.format_exc()}")
         return JSONResponse({
             "success": False,
             "error": f"Ошибка сервера: {str(e)}"
