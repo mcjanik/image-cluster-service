@@ -93,7 +93,11 @@ def analyze_image_with_claude(image_data: bytes, filename: str) -> tuple[str, di
         
         # Инициализация клиента
         logger.info("🔧 Инициализируем Anthropic клиент...")
-        client = anthropic.Anthropic(api_key=api_key)
+        client = anthropic.Anthropic(
+            api_key=api_key,
+            # Убираем проксирование для Render
+            timeout=60.0
+        )
         
         # Кодируем изображение в base64
         logger.info("🔄 Кодируем изображение в base64...")
@@ -245,9 +249,9 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
         logger.info(f"📥 Получено {len(files)} файлов для анализа")
         
         # Ограничиваем количество файлов
-        if len(files) > 5:
-            logger.warning(f"⚠️ Слишком много файлов: {len(files)}, максимум 5")
-            raise HTTPException(status_code=400, detail="Максимум 5 файлов за раз для стабильной работы")
+        if len(files) > 14:
+            logger.warning(f"⚠️ Слишком много файлов: {len(files)}, максимум 14")
+            raise HTTPException(status_code=400, detail="Максимум 14 файлов за раз")
         
         results = []
         total_cost_rub = 0
@@ -331,7 +335,10 @@ async def health_check():
     claude_status = "unknown"
     try:
         if api_key:
-            client = anthropic.Anthropic(api_key=api_key)
+            client = anthropic.Anthropic(
+                api_key=api_key,
+                timeout=60.0
+            )
             # Не делаем реальный запрос, просто проверяем что клиент создается
             claude_status = "configured"
     except Exception as e:
