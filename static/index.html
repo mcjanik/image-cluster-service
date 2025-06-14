@@ -9,8 +9,8 @@
     <script src="https://cdn.tailwindcss.com"></script>
     
     <!-- React -->
-    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     
     <!-- Babel для JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -24,6 +24,30 @@
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
             -webkit-font-smoothing: antialiased;
             -moz-osx-font-smoothing: grayscale;
+        }
+        
+        /* Загрузочный экран */
+        .loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: #f3f4f6;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+        
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #e5e7eb;
+            border-top: 4px solid #f97316;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
         }
         
         /* Анимации */
@@ -74,11 +98,427 @@
         .custom-scrollbar::-webkit-scrollbar-thumb:hover {
             background: #a1a1a1;
         }
+
+        /* Скрыть loading экран после загрузки */
+        .loaded .loading-screen {
+            display: none;
+        }
     </style>
 </head>
 <body>
+    <!-- Загрузочный экран -->
+    <div class="loading-screen" id="loadingScreen">
+        <div class="spinner"></div>
+        <p class="mt-4 text-gray-600">Загружаем AIТовар.tj...</p>
+    </div>
+
+    <!-- Основное приложение -->
     <div id="root"></div>
     
-    <script type="text/babel" src="/static/app.js"></script>
+    <script type="text/babel">
+        // Встроенный JavaScript вместо внешнего файла для избежания проблем с загрузкой
+        const { useState, useRef, useEffect } = React;
+
+        // Иконки из Lucide
+        const { 
+          Upload, Camera, Image, Save, X, Plus, Trash2, Clock, 
+          Star, Crown, Eye, Menu, ArrowLeft, DollarSign, Activity,
+          Zap, CheckCircle, AlertCircle
+        } = lucide;
+
+        // Скрываем загрузочный экран когда React загрузился
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                document.body.classList.add('loaded');
+            }, 500);
+        });
+
+        const PhotoListingApp = () => {
+          const [currentStep, setCurrentStep] = useState('upload');
+          const [uploadedImages, setUploadedImages] = useState([]);
+          const [processing, setProcessing] = useState(false);
+          const [dragActive, setDragActive] = useState(false);
+          const [results, setResults] = useState([]);
+          const [publishedItems, setPublishedItems] = useState([]);
+          const [userDescription, setUserDescription] = useState('');
+          const [apiCosts, setApiCosts] = useState([]);
+          const [totalSpent, setTotalSpent] = useState(0);
+          const [sessionCosts, setSessionCosts] = useState([]);
+          const fileInputRef = useRef(null);
+
+          const categories = {
+            'Недвижимость': ['Квартиры', 'Дома', 'Дачи', 'Коммерческая недвижимость', 'Земельные участки', 'Гаражи'],
+            'Транспорт': ['Легковые автомобили', 'Грузовики', 'Мотоциклы', 'Автозапчасти', 'Шины и диски'],
+            'Электроника и бытовая техника': ['Телефоны и связь', 'Компьютеры и оргтехника', 'Телевизоры', 'Аудиотехника', 'Фото и видео'],
+            'Одежда и личные вещи': ['Мужская одежда', 'Женская одежда', 'Детская одежда', 'Обувь', 'Аксессуары'],
+            'Все для дома': ['Мебель', 'Бытовая техника', 'Посуда', 'Текстиль', 'Инструменты'],
+            'Детский мир': ['Детская одежда', 'Детская обувь', 'Детская мебель', 'Детские автокресла', 'Детские коляски', 'Игрушки'],
+            'Строительство, сырье и ремонт': ['Стройматериалы', 'Инструменты', 'Сантехника', 'Электрика'],
+            'Работа': ['Вакансии', 'Резюме', 'Услуги']
+          };
+
+          const conditions = ['Новое', 'Отличное', 'Хорошее', 'Удовлетворительное', 'На запчасти'];
+          const currencies = ['сомони', 'доллар', 'евро'];
+
+          // Загрузка сохраненных данных при запуске
+          useEffect(() => {
+            try {
+              const savedCosts = localStorage.getItem('ai_tovar_costs');
+              if (savedCosts) {
+                const costs = JSON.parse(savedCosts);
+                setApiCosts(costs);
+                setTotalSpent(costs.reduce((sum, cost) => sum + cost.total_cost_rub, 0));
+              }
+            } catch (error) {
+              console.error('Ошибка загрузки сохраненных данных:', error);
+            }
+          }, []);
+
+          // Сохранение расходов
+          const saveCosts = (newCosts) => {
+            try {
+              const allCosts = [...apiCosts, ...newCosts];
+              setApiCosts(allCosts);
+              localStorage.setItem('ai_tovar_costs', JSON.stringify(allCosts));
+              
+              const newTotal = allCosts.reduce((sum, cost) => sum + cost.total_cost_rub, 0);
+              setTotalSpent(newTotal);
+            } catch (error) {
+              console.error('Ошибка сохранения расходов:', error);
+            }
+          };
+
+          const handleDrag = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (e.type === "dragenter" || e.type === "dragover") {
+              setDragActive(true);
+            } else if (e.type === "dragleave") {
+              setDragActive(false);
+            }
+          };
+
+          const handleDrop = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            setDragActive(false);
+            
+            const files = Array.from(e.dataTransfer.files);
+            handleFiles(files);
+          };
+
+          const handleFileSelect = (e) => {
+            const files = Array.from(e.target.files);
+            handleFiles(files);
+          };
+
+          const handleFiles = (files) => {
+            const imageFiles = files.filter(file => file.type.startsWith('image/'));
+            
+            imageFiles.forEach(file => {
+              const reader = new FileReader();
+              reader.onload = (e) => {
+                setUploadedImages(prev => [...prev, {
+                  id: Date.now() + Math.random(),
+                  file,
+                  preview: e.target.result,
+                  name: file.name,
+                  size: file.size
+                }]);
+              };
+              reader.readAsDataURL(file);
+            });
+          };
+
+          const removeImage = (id) => {
+            setUploadedImages(prev => prev.filter(img => img.id !== id));
+          };
+
+          const processImages = async () => {
+            setProcessing(true);
+            setSessionCosts([]);
+            
+            try {
+              const formData = new FormData();
+              uploadedImages.forEach(img => {
+                formData.append('files', img.file);
+              });
+              
+              const response = await fetch('/api/analyze-multiple', {
+                method: 'POST',
+                body: formData
+              });
+              
+              if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+              }
+              
+              const data = await response.json();
+              
+              if (data.success) {
+                const processedResults = data.results.map(result => ({
+                  id: result.id,
+                  images: [result.image_preview],
+                  title: extractTitle(result.description),
+                  description: result.description,
+                  mainCategory: detectCategory(result.description),
+                  subCategory: detectSubCategory(result.description),
+                  price: extractPrice(result.description),
+                  currency: 'сомони',
+                  brand: extractBrand(result.description),
+                  condition: extractCondition(result.description),
+                  location: 'Душанбе',
+                  userInput: userDescription,
+                  apiCost: result.api_cost,
+                  filename: result.filename,
+                  width: result.width,
+                  height: result.height,
+                  size_bytes: result.size_bytes
+                }));
+                
+                setResults(processedResults);
+                
+                const newCosts = data.results.map(result => ({
+                  ...result.api_cost,
+                  timestamp: new Date().toISOString(),
+                  filename: result.filename
+                }));
+                
+                setSessionCosts(newCosts);
+                saveCosts(newCosts);
+                
+                setCurrentStep('results');
+              } else {
+                throw new Error(data.error || 'Неизвестная ошибка');
+              }
+              
+            } catch (error) {
+              console.error('Ошибка обработки:', error);
+              alert(`Ошибка обработки: ${error.message}`);
+            } finally {
+              setProcessing(false);
+            }
+          };
+
+          // Функции для извлечения данных из описания
+          const extractTitle = (description) => {
+            const lines = description.split('\n');
+            for (let line of lines) {
+              if (line.includes('ТОВАР И КАТЕГОРИЯ:')) {
+                const nextLine = lines[lines.indexOf(line) + 1];
+                if (nextLine && nextLine.startsWith('- ')) {
+                  return nextLine.substring(2).trim();
+                }
+              }
+            }
+            return 'Товар для продажи';
+          };
+
+          const detectCategory = (description) => {
+            const categoryKeywords = {
+              'Одежда и личные вещи': ['кроссовки', 'обувь', 'одежда', 'футболка', 'джинсы', 'платье'],
+              'Электроника и бытовая техника': ['ноутбук', 'телефон', 'компьютер', 'телевизор', 'техника'],
+              'Детский мир': ['детск', 'автокресло', 'коляска', 'игрушка'],
+              'Транспорт': ['автомобиль', 'машина', 'мотоцикл', 'запчасти'],
+              'Все для дома': ['мебель', 'стол', 'стул', 'диван', 'кровать']
+            };
+            
+            const lowerDesc = description.toLowerCase();
+            for (let [category, keywords] of Object.entries(categoryKeywords)) {
+              if (keywords.some(keyword => lowerDesc.includes(keyword))) {
+                return category;
+              }
+            }
+            return 'Все для дома';
+          };
+
+          const detectSubCategory = (description) => {
+            const lowerDesc = description.toLowerCase();
+            if (lowerDesc.includes('кроссовки') || lowerDesc.includes('обувь')) return 'Обувь';
+            if (lowerDesc.includes('ноутбук') || lowerDesc.includes('компьютер')) return 'Компьютеры и оргтехника';
+            if (lowerDesc.includes('детск')) return 'Детские товары';
+            if (lowerDesc.includes('автокресло')) return 'Детские автокресла';
+            return 'Другое';
+          };
+
+          const extractPrice = (description) => {
+            const priceMatch = description.match(/(\d+)\s*(сомони|доллар|рубл)/i);
+            if (priceMatch) {
+              return priceMatch[1];
+            }
+            return '0';
+          };
+
+          const extractBrand = (description) => {
+            const brands = ['Nike', 'Adidas', 'Samsung', 'Apple', 'HP', 'Dell', 'Sony', 'LG', 'MAXI-COSI'];
+            const lowerDesc = description.toLowerCase();
+            for (let brand of brands) {
+              if (lowerDesc.includes(brand.toLowerCase())) {
+                return brand;
+              }
+            }
+            return '';
+          };
+
+          const extractCondition = (description) => {
+            const lowerDesc = description.toLowerCase();
+            if (lowerDesc.includes('новый') || lowerDesc.includes('новое')) return 'Новое';
+            if (lowerDesc.includes('отличное') || lowerDesc.includes('отлично')) return 'Отличное';
+            if (lowerDesc.includes('хорошее') || lowerDesc.includes('хорошо')) return 'Хорошее';
+            return 'Хорошее';
+          };
+
+          const SomonLogo = () => (
+            <div className="flex items-center">
+              <span className="text-blue-600 font-bold text-xl">AI</span>
+              <span className="text-orange-500 font-bold text-xl">Товар</span>
+              <span className="text-green-500 font-bold text-xl">.tj</span>
+            </div>
+          );
+
+          return (
+            <div className="min-h-screen bg-gray-50 mobile-container">
+              <div className="bg-white border-b border-gray-200 p-4">
+                <div className="flex items-center justify-between">
+                  <SomonLogo />
+                  <Menu className="w-6 h-6 text-gray-600" />
+                </div>
+              </div>
+
+              <div className="p-4">
+                <div className="text-center mb-6">
+                  <div className="inline-flex items-center justify-center w-16 h-16 bg-orange-500 rounded-full mb-4">
+                    <Camera className="w-8 h-8 text-white" />
+                  </div>
+                  <h1 className="text-2xl font-bold text-gray-800 mb-2">
+                    ИИ Анализ товаров
+                  </h1>
+                  <p className="text-gray-600 text-sm">
+                    Загрузите фото товаров для автоматического создания объявлений с помощью Claude AI
+                  </p>
+                </div>
+
+                <div className="bg-white rounded-lg border p-4 mb-6">
+                  <div
+                    className={`relative border-2 border-dashed rounded-lg p-6 transition-all ${
+                      dragActive 
+                        ? 'border-orange-500 bg-orange-50' 
+                        : 'border-gray-300'
+                    }`}
+                    onDragEnter={handleDrag}
+                    onDragLeave={handleDrag}
+                    onDragOver={handleDrag}
+                    onDrop={handleDrop}
+                  >
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept="image/*"
+                      onChange={handleFileSelect}
+                      className="hidden"
+                    />
+                    
+                    <div className="text-center">
+                      <Upload className="w-10 h-10 text-gray-400 mx-auto mb-3" />
+                      <h3 className="text-base font-medium text-gray-700 mb-2">
+                        Добавьте фотографии товаров
+                      </h3>
+                      <p className="text-gray-500 text-sm mb-4">
+                        Нажмите для выбора или перетащите сюда
+                      </p>
+                      <button
+                        onClick={() => fileInputRef.current?.click()}
+                        className="bg-orange-500 text-white px-6 py-2 rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors"
+                      >
+                        Выбрать фото
+                      </button>
+                    </div>
+                  </div>
+
+                  {uploadedImages.length > 0 && (
+                    <div className="mt-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-medium text-gray-700">
+                          Загружено: {uploadedImages.length} фото
+                        </h3>
+                        <div className="text-xs text-blue-600">
+                          ~₽{(uploadedImages.length * 1.5).toFixed(2)} за анализ
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-3 gap-2">
+                        {uploadedImages.map((image) => (
+                          <div key={image.id} className="relative">
+                            <img
+                              src={image.preview}
+                              alt={image.name}
+                              className="w-full h-24 object-cover rounded border"
+                            />
+                            <button
+                              onClick={() => removeImage(image.id)}
+                              className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs hover:bg-red-600"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {uploadedImages.length > 0 && (
+                    <div className="mt-4">
+                      <button
+                        onClick={processImages}
+                        disabled={processing}
+                        className="w-full bg-orange-500 text-white py-3 rounded-lg font-medium disabled:opacity-50 disabled:cursor-not-allowed hover:bg-orange-600 transition-colors"
+                      >
+                        {processing ? (
+                          <div className="flex items-center justify-center">
+                            <Clock className="w-4 h-4 mr-2 animate-spin" />
+                            Claude AI анализирует товары...
+                          </div>
+                        ) : (
+                          `Анализировать ${uploadedImages.length} товаров с ИИ`
+                        )}
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="space-y-3">
+                  <div className="bg-white rounded-lg border p-4 flex items-center">
+                    <Zap className="w-8 h-8 text-orange-500 mr-3 flex-shrink-0" />
+                    <div>
+                      <h3 className="font-medium text-gray-800 text-sm">Claude AI распознавание</h3>
+                      <p className="text-gray-600 text-xs">Мощный ИИ автоматически определяет товары</p>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-white rounded-lg border p-4 flex items-center">
+                    <Save className="w-8 h-8 text-orange-500 mr-3 flex-shrink-0" />
+                    <div>
+                      <h3 className="font-medium text-gray-800 text-sm">Умные описания</h3>
+                      <p className="text-gray-600 text-xs">ИИ создает подробные описания для продажи</p>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-white rounded-lg border p-4 flex items-center">
+                    <Activity className="w-8 h-8 text-orange-500 mr-3 flex-shrink-0" />
+                    <div>
+                      <h3 className="font-medium text-gray-800 text-sm">Контроль расходов</h3>
+                      <p className="text-gray-600 text-xs">Отслеживайте стоимость каждого анализа</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          );
+        };
+
+        // Рендерим приложение
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<PhotoListingApp />);
+    </script>
 </body>
 </html>
