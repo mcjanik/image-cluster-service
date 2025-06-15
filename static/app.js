@@ -501,6 +501,7 @@ const PhotoListingApp = () => {
             image: mainImage, // Основное изображение для совместимости
             mainCategory: product.category || detectCategory(product.description || ''),
             subCategory: product.subcategory || detectSubCategory(product.description || '', product.category),
+            color: product.color || '',
             price: extractPrice(product.description || ''),
             brand: extractBrand(product.description || ''),
             condition: extractCondition(product.description || ''),
@@ -832,6 +833,7 @@ const PhotoListingApp = () => {
 const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDelete, onPublish, onRemoveImage, onMoveImage, allProducts }) => {
   const [formData, setFormData] = useState(item);
   const [isExpanded, setIsExpanded] = useState(false);
+  const [selectedImage, setSelectedImage] = useState(null);
 
   // Синхронизируем formData с item при изменениях
   useEffect(() => {
@@ -899,10 +901,16 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
               <span className="text-orange-500 font-bold text-sm ml-1">{formData.currency}</span>
             </div>
             <div className="flex items-center justify-between mt-1">
-              <span className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded text-xs">
-                {formData.mainCategory}
-              </span>
-
+              <div className="flex items-center space-x-1">
+                <span className="bg-orange-100 text-orange-800 px-2 py-0.5 rounded text-xs">
+                  {formData.mainCategory}
+                </span>
+                {formData.color && (
+                  <span className="bg-blue-100 text-blue-800 px-2 py-0.5 rounded text-xs">
+                    {formData.color}
+                  </span>
+                )}
+              </div>
             </div>
           </div>
           <button
@@ -929,8 +937,9 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
                     <img
                       src={image}
                       alt={`${formData.title} - фото ${index + 1}`}
-                      className="w-full h-16 object-cover rounded border hover:border-orange-500 transition-colors"
+                      className="w-full h-16 object-cover rounded border hover:border-orange-500 transition-colors cursor-pointer"
                       draggable="true"
+                      onClick={() => setSelectedImage(image)}
                       onDragStart={(e) => {
                         e.dataTransfer.setData('text/plain', JSON.stringify({
                           fromProductId: item.id,
@@ -941,7 +950,11 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
                     />
                     {(item.images ? item.images.length : 1) > 1 && (
                       <button
-                        onClick={() => onRemoveImage && onRemoveImage(item.id, index)}
+                        onClick={() => {
+                          if (confirm('Удалить это изображение?')) {
+                            onRemoveImage && onRemoveImage(item.id, index);
+                          }
+                        }}
                         className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         ×
@@ -1041,6 +1054,17 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
           </div>
 
           <div>
+            <label className="block text-xs text-gray-600 mb-1">Цвет</label>
+            <input
+              type="text"
+              value={formData.color || ''}
+              onChange={(e) => handleChange('color', e.target.value)}
+              className="w-full p-2 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-orange-500"
+              placeholder="Основной цвет товара"
+            />
+          </div>
+
+          <div>
             <label className="block text-xs text-gray-600 mb-1">Местоположение</label>
             <input
               type="text"
@@ -1063,6 +1087,29 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
               className="flex-1 bg-orange-500 text-white py-2 rounded text-sm font-medium hover:bg-orange-600 transition-colors"
             >
               Опубликовать
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Модальное окно для просмотра изображения */}
+      {selectedImage && (
+        <div
+          className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50"
+          onClick={() => setSelectedImage(null)}
+        >
+          <div className="relative max-w-4xl max-h-full p-4">
+            <img
+              src={selectedImage}
+              alt="Увеличенное изображение"
+              className="max-w-full max-h-full object-contain rounded-lg"
+              onClick={(e) => e.stopPropagation()}
+            />
+            <button
+              onClick={() => setSelectedImage(null)}
+              className="absolute top-2 right-2 bg-white bg-opacity-20 hover:bg-opacity-30 text-white rounded-full w-8 h-8 flex items-center justify-center transition-colors"
+            >
+              ×
             </button>
           </div>
         </div>
