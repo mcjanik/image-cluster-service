@@ -867,22 +867,34 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                 logger.error("❌ ПУСТОЙ ОТВЕТ ОТ CLAUDE!")
                 raise ValueError("Claude вернул пустой ответ")
 
-            # Парсим JSON ответ
-            # Сначала проверяем на markdown блоки
+            # Парсим JSON ответ - ИСПРАВЛЕННАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ ИЗ MARKDOWN
             if response_text.strip().startswith('```'):
                 # Извлекаем JSON из markdown блока
                 lines = response_text.strip().split('\n')
                 json_lines = []
                 in_json = False
                 for line in lines:
-                    if line.strip() == '```json' or line.strip() == '```':
+                    if line.strip() == '```json' or (line.strip() == '```' and in_json):
                         in_json = not in_json
                         continue
-                    if in_json or (not line.startswith('```')):
+                    if in_json:  # ИСПРАВЛЕНО: добавляем строки ТОЛЬКО когда внутри JSON блока
                         json_lines.append(line)
                 response_text = '\n'.join(json_lines)
                 logger.info(
                     f"🔧 Извлечен JSON из markdown блока, новая длина: {len(response_text)}")
+                # Показываем первые 200 символов
+                logger.info(f"🔧 Извлеченный JSON: {response_text[:200]}...")
+            else:
+                # Если нет markdown блоков, пытаемся найти JSON в тексте
+                # Ищем первый '[' и последний ']' для извлечения JSON массива
+                start_idx = response_text.find('[')
+                end_idx = response_text.rfind(']')
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    response_text = response_text[start_idx:end_idx+1]
+                    logger.info(
+                        f"🔧 Извлечен JSON без markdown, длина: {len(response_text)}")
+                    logger.info(
+                        f"🔧 Извлеченный JSON: {response_text[:200]}...")
 
             # Проверяем что после извлечения из markdown у нас есть контент
             if not response_text.strip():
@@ -1398,22 +1410,34 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                 logger.error("❌ ПУСТОЙ ОТВЕТ ОТ CLAUDE!")
                 raise ValueError("Claude вернул пустой ответ")
 
-            # Парсим JSON ответ - ПРОСТОЙ ПОДХОД КАК В ДИАГНОСТИКЕ
-            # Но сначала проверяем на markdown блоки
+            # Парсим JSON ответ - ИСПРАВЛЕННАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ ИЗ MARKDOWN
             if response_text.strip().startswith('```'):
                 # Извлекаем JSON из markdown блока
                 lines = response_text.strip().split('\n')
                 json_lines = []
                 in_json = False
                 for line in lines:
-                    if line.strip() == '```json' or line.strip() == '```':
+                    if line.strip() == '```json' or (line.strip() == '```' and in_json):
                         in_json = not in_json
                         continue
-                    if in_json or (not line.startswith('```')):
+                    if in_json:  # ИСПРАВЛЕНО: добавляем строки ТОЛЬКО когда внутри JSON блока
                         json_lines.append(line)
                 response_text = '\n'.join(json_lines)
                 logger.info(
                     f"🔧 Извлечен JSON из markdown блока, новая длина: {len(response_text)}")
+                # Показываем первые 200 символов
+                logger.info(f"🔧 Извлеченный JSON: {response_text[:200]}...")
+            else:
+                # Если нет markdown блоков, пытаемся найти JSON в тексте
+                # Ищем первый '[' и последний ']' для извлечения JSON массива
+                start_idx = response_text.find('[')
+                end_idx = response_text.rfind(']')
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    response_text = response_text[start_idx:end_idx+1]
+                    logger.info(
+                        f"🔧 Извлечен JSON без markdown, длина: {len(response_text)}")
+                    logger.info(
+                        f"🔧 Извлеченный JSON: {response_text[:200]}...")
 
             # Проверяем что после извлечения из markdown у нас есть контент
             if not response_text.strip():
