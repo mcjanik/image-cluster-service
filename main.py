@@ -485,6 +485,143 @@ def smart_group_products(descriptions: List[dict]) -> List[dict]:
     return groups
 
 
+def process_claude_results_with_filenames(products: List[dict], image_batch: List[tuple[bytes, str]], file_info: List[dict]) -> List[dict]:
+    """
+    Обрабатывает результаты Claude с использованием имен файлов вместо индексов
+    Возвращает список товаров с изображениями
+    """
+    # Создаем словарь filename -> index для обратного поиска
+    filename_to_index = {filename: i for i,
+                         (_, filename) in enumerate(image_batch)}
+    all_filenames = set(filename_to_index.keys())
+
+    logger.info(
+        f"🔧 Валидация имен файлов: всего файлов = {len(all_filenames)}")
+    logger.info(f"📋 Доступные файлы: {sorted(all_filenames)}")
+
+    # Собираем все использованные имена файлов
+    all_used_filenames = []
+    for product in products:
+        original_filenames = product.get('image_filenames', [])
+        valid_filenames = []
+
+        for filename in original_filenames:
+            if filename in filename_to_index:
+                valid_filenames.append(filename)
+                all_used_filenames.append(filename)
+            else:
+                logger.warning(
+                    f"⚠️ Товар {product.get('title', '?')}: неверное имя файла '{filename}'")
+                logger.warning(f"   Доступные файлы: {sorted(all_filenames)}")
+
+        product['image_filenames'] = valid_filenames
+        # Конвертируем в индексы для обратной совместимости
+        product['image_indexes'] = [filename_to_index[f]
+                                    for f in valid_filenames]
+
+        if original_filenames != valid_filenames:
+            logger.info(
+                f"✅ Товар {product.get('title', '?')}: исправлены файлы {original_filenames} → {valid_filenames}")
+
+    # Проверяем на пропущенные и дублированные файлы
+    used_filenames = set(all_used_filenames)
+    missing_filenames = all_filenames - used_filenames
+    duplicate_filenames = [
+        f for f in all_used_filenames if all_used_filenames.count(f) > 1]
+
+    if missing_filenames:
+        logger.warning(
+            f"⚠️ Пропущенные файлы: {sorted(missing_filenames)}")
+    if duplicate_filenames:
+        logger.warning(
+            f"⚠️ Дублированные файлы: {sorted(set(duplicate_filenames))}")
+
+    logger.info(
+        f"📊 Статистика файлов: использовано {len(used_filenames)}/{len(all_filenames)}")
+
+    # Формируем результаты по группам товаров
+    results = []
+
+    for product_idx, product in enumerate(products):
+        title = product.get('title', f'Товар {product_idx + 1}')
+        category = product.get('category', 'Разное')
+        subcategory = product.get('subcategory', '')
+        color = product.get('color', '')
+        image_filenames = product.get('image_filenames', [])
+        image_indexes = product.get(
+            'image_indexes', [])  # Уже валидированы выше
+
+        logger.info(
+            f"🔍 Обрабатываем товар {product_idx}: '{title}' с файлами {image_filenames}")
+
+        # Используем уже валидированные индексы без повторной проверки
+        valid_indexes = image_indexes
+
+        # Если нет валидных индексов, используем первый доступный
+        if not valid_indexes and file_info:
+            valid_indexes = [0]
+            image_filenames = [file_info[0]['filename']]
+            logger.info(
+                f"✅ Fallback: назначен файл {file_info[0]['filename']} для товара '{title}'")
+
+        # Собираем изображения для этого товара
+        product_images = []
+        actual_filenames = []
+
+        for img_idx in valid_indexes:
+            if img_idx < len(file_info):
+                info = file_info[img_idx]
+                image_base64 = base64.b64encode(
+                    info['contents']).decode('utf-8')
+                product_images.append(
+                    f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
+                actual_filenames.append(info['filename'])
+                logger.info(
+                    f"  ✅ Добавлено изображение: {info['filename']}")
+
+        if not product_images and file_info:  # Fallback если нет изображений
+            info = file_info[0]
+            image_base64 = base64.b64encode(
+                info['contents']).decode('utf-8')
+            product_images.append(
+                f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
+            valid_indexes = [0]
+            actual_filenames = [info['filename']]
+
+        logger.info(
+            f"  📸 Итого изображений для '{title}': {len(product_images)} ({actual_filenames})")
+
+        # Создаем краткое описание товара
+        description_parts = [f"🏷️ {title}"]
+        if color:
+            description_parts.append(f"🎨 Цвет: {color}")
+        description_parts.append(f"📂 {category}")
+        if subcategory:
+            description_parts.append(f"📂 {subcategory}")
+
+        description = "\n".join(description_parts)
+
+        results.append({
+            "id": f"product_{product_idx}_{int(time.time())}",
+            "filename": f"grouped_product_{product_idx}",
+            "width": 800,
+            "height": 600,
+            "size_bytes": sum(file_info[i]['size'] for i in valid_indexes if i < len(file_info)),
+            "images": product_images,
+            "image_preview": product_images[0] if product_images else "",
+            "description": description,
+            "title": title,
+            "category": category,
+            "subcategory": subcategory,
+            "color": color,
+            "image_indexes": valid_indexes,
+            "image_filenames": actual_filenames
+        })
+
+    logger.info(f"✅ Сформировано {len(results)} товарных групп")
+    return results
+
+
 def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> str:
     """
     Анализирует batch изображений с Claude API для группировки товаров
@@ -967,125 +1104,9 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
             if not isinstance(products, list):
                 raise ValueError("Ответ Claude не является списком")
 
-            # Определяем максимальный допустимый индекс
-            max_valid_index = len(image_batch) - 1
-            logger.info(
-                f"🔧 Валидация индексов: максимальный допустимый индекс = {max_valid_index}")
-
-            # Собираем все использованные индексы
-            all_used_indexes = []
-            for product in products:
-                original_indexes = product.get('image_indexes', [])
-                valid_indexes = []
-
-                for idx in original_indexes:
-                    if isinstance(idx, int) and 0 <= idx <= max_valid_index:
-                        valid_indexes.append(idx)
-                        all_used_indexes.append(idx)
-                    else:
-                        logger.warning(
-                            f"⚠️ Товар {product.get('title', '?')}: неверный индекс {idx}, максимальный = {max_valid_index}")
-
-                product['image_indexes'] = valid_indexes
-                if original_indexes != valid_indexes:
-                    logger.info(
-                        f"✅ Товар {product.get('title', '?')}: исправлены индексы {original_indexes} → {valid_indexes}")
-
-            # Проверяем на пропущенные и дублированные индексы
-            expected_indexes = set(range(len(image_batch)))
-            used_indexes = set(all_used_indexes)
-            missing_indexes = expected_indexes - used_indexes
-            duplicate_indexes = [
-                idx for idx in all_used_indexes if all_used_indexes.count(idx) > 1]
-
-            if missing_indexes:
-                logger.warning(
-                    f"⚠️ Пропущенные индексы: {sorted(missing_indexes)}")
-            if duplicate_indexes:
-                logger.warning(
-                    f"⚠️ Дублированные индексы: {sorted(set(duplicate_indexes))}")
-
-            logger.info(
-                f"📊 Статистика индексов: использовано {len(used_indexes)}/{len(expected_indexes)}")
-
-            # Формируем результаты по группам товаров
-            results = []
-
-            for product_idx, product in enumerate(products):
-                title = product.get('title', f'Товар {product_idx + 1}')
-                category = product.get('category', 'Разное')
-                subcategory = product.get('subcategory', '')
-                color = product.get('color', '')
-                image_indexes = product.get(
-                    'image_indexes', [])  # Уже валидированы выше
-
-                logger.info(
-                    f"🔍 Обрабатываем товар {product_idx}: '{title}' с индексами {image_indexes}")
-
-                # Используем уже валидированные индексы без повторной проверки
-                valid_indexes = image_indexes
-
-                # Если нет валидных индексов, используем первый доступный
-                if not valid_indexes and file_info:
-                    valid_indexes = [0]
-                    logger.info(
-                        f"✅ Fallback: назначен индекс 0 для товара '{title}'")
-
-                # Собираем изображения для этого товара
-                product_images = []
-                image_filenames = []
-
-                for img_idx in valid_indexes:
-                    if img_idx < len(file_info):
-                        info = file_info[img_idx]
-                        image_base64 = base64.b64encode(
-                            info['contents']).decode('utf-8')
-                        product_images.append(
-                            f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
-                        image_filenames.append(info['filename'])
-                        logger.info(
-                            f"  ✅ Добавлено изображение {img_idx}: {info['filename']}")
-
-                if not product_images and file_info:  # Fallback если нет изображений
-                    info = file_info[0]
-                    image_base64 = base64.b64encode(
-                        info['contents']).decode('utf-8')
-                    product_images.append(
-                        f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
-                    valid_indexes = [0]
-                    image_filenames = [info['filename']]
-
-                logger.info(
-                    f"  📸 Итого изображений для '{title}': {len(product_images)} ({image_filenames})")
-
-                # Создаем краткое описание товара
-                description_parts = [f"🏷️ {title}"]
-                if color:
-                    description_parts.append(f"🎨 Цвет: {color}")
-                description_parts.append(f"📂 {category}")
-                if subcategory:
-                    description_parts.append(f"📂 {subcategory}")
-
-                description = "\n".join(description_parts)
-
-                results.append({
-                    "id": f"product_{product_idx}_{int(time.time())}",
-                    "filename": f"grouped_product_{product_idx}",
-                    "width": 800,
-                    "height": 600,
-                    "size_bytes": sum(file_info[i]['size'] for i in valid_indexes if i < len(file_info)),
-                    "images": product_images,
-                    "image_preview": product_images[0] if product_images else "",
-                    "description": description,
-                    "title": title,
-                    "category": category,
-                    "subcategory": subcategory,
-                    "color": color,
-                    "image_indexes": valid_indexes
-                })
-
-            # ИСПРАВЛЕНИЕ: Перенесли логирование и return ПОСЛЕ цикла for
-            logger.info(f"✅ Сформировано {len(results)} товарных групп")
+            # Используем новую функцию для обработки результатов с именами файлов
+            results = process_claude_results_with_filenames(
+                products, image_batch, file_info)
 
             return JSONResponse({
                 "success": True,
@@ -1560,124 +1581,9 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
             if not isinstance(products, list):
                 raise ValueError("Ответ Claude не является списком")
 
-            # Определяем максимальный допустимый индекс
-            max_valid_index = len(image_batch) - 1
-            logger.info(
-                f"🔧 Валидация индексов: максимальный допустимый индекс = {max_valid_index}")
-
-            # Собираем все использованные индексы
-            all_used_indexes = []
-            for product in products:
-                original_indexes = product.get('image_indexes', [])
-                valid_indexes = []
-
-                for idx in original_indexes:
-                    if isinstance(idx, int) and 0 <= idx <= max_valid_index:
-                        valid_indexes.append(idx)
-                        all_used_indexes.append(idx)
-                    else:
-                        logger.warning(
-                            f"⚠️ Товар {product.get('title', '?')}: неверный индекс {idx}, максимальный = {max_valid_index}")
-
-                product['image_indexes'] = valid_indexes
-                if original_indexes != valid_indexes:
-                    logger.info(
-                        f"✅ Товар {product.get('title', '?')}: исправлены индексы {original_indexes} → {valid_indexes}")
-
-            # Проверяем на пропущенные и дублированные индексы
-            expected_indexes = set(range(len(image_batch)))
-            used_indexes = set(all_used_indexes)
-            missing_indexes = expected_indexes - used_indexes
-            duplicate_indexes = [
-                idx for idx in all_used_indexes if all_used_indexes.count(idx) > 1]
-
-            if missing_indexes:
-                logger.warning(
-                    f"⚠️ Пропущенные индексы: {sorted(missing_indexes)}")
-            if duplicate_indexes:
-                logger.warning(
-                    f"⚠️ Дублированные индексы: {sorted(set(duplicate_indexes))}")
-
-            logger.info(
-                f"📊 Статистика индексов: использовано {len(used_indexes)}/{len(expected_indexes)}")
-
-            # Формируем результаты по группам товаров
-            results = []
-
-            for product_idx, product in enumerate(products):
-                title = product.get('title', f'Товар {product_idx + 1}')
-                category = product.get('category', 'Разное')
-                subcategory = product.get('subcategory', '')
-                color = product.get('color', '')
-                image_indexes = product.get(
-                    'image_indexes', [])  # Уже валидированы выше
-
-                logger.info(
-                    f"🔍 Обрабатываем товар {product_idx}: '{title}' с индексами {image_indexes}")
-
-                # Используем уже валидированные индексы без повторной проверки
-                valid_indexes = image_indexes
-
-                # Если нет валидных индексов, используем первый доступный
-                if not valid_indexes and file_info:
-                    valid_indexes = [0]
-                    logger.info(
-                        f"✅ Fallback: назначен индекс 0 для товара '{title}'")
-
-                # Собираем изображения для этого товара
-                product_images = []
-                image_filenames = []
-
-                for img_idx in valid_indexes:
-                    if img_idx < len(file_info):
-                        info = file_info[img_idx]
-                        image_base64 = base64.b64encode(
-                            info['contents']).decode('utf-8')
-                        product_images.append(
-                            f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
-                        image_filenames.append(info['filename'])
-                        logger.info(
-                            f"  ✅ Добавлено изображение {img_idx}: {info['filename']}")
-
-                if not product_images and file_info:  # Fallback если нет изображений
-                    info = file_info[0]
-                    image_base64 = base64.b64encode(
-                        info['contents']).decode('utf-8')
-                    product_images.append(
-                        f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
-                    valid_indexes = [0]
-                    image_filenames = [info['filename']]
-
-                logger.info(
-                    f"  📸 Итого изображений для '{title}': {len(product_images)} ({image_filenames})")
-
-                # Создаем краткое описание товара
-                description_parts = [f"🏷️ {title}"]
-                if color:
-                    description_parts.append(f"🎨 Цвет: {color}")
-                description_parts.append(f"📂 {category}")
-                if subcategory:
-                    description_parts.append(f"📂 {subcategory}")
-
-                description = "\n".join(description_parts)
-
-                results.append({
-                    "id": f"product_{product_idx}_{int(time.time())}",
-                    "filename": f"grouped_product_{product_idx}",
-                    "width": 800,
-                    "height": 600,
-                    "size_bytes": sum(file_info[i]['size'] for i in valid_indexes if i < len(file_info)),
-                    "images": product_images,
-                    "image_preview": product_images[0] if product_images else "",
-                    "description": description,
-                    "title": title,
-                    "category": category,
-                    "subcategory": subcategory,
-                    "color": color,
-                    "image_indexes": valid_indexes
-                })
-
-            logger.info(f"✅ Сформировано {len(results)} товарных групп")
+            # Используем новую функцию для обработки результатов с именами файлов
+            results = process_claude_results_with_filenames(
+                products, image_batch, file_info)
 
             return JSONResponse({
                 "success": True,
