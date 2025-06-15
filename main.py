@@ -831,117 +831,166 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                 f"✅ ПОЛУЧЕН ДИАГНОСТИЧЕСКИЙ ОТВЕТ! Длина: {len(response_text)} символов")
             logger.info(f"🔍 ПОЛНЫЙ ОТВЕТ: {response_text}")
 
-            # Пытаемся распарсить JSON
-            try:
-                import json
+            # Парсим JSON ответ
+            products = json.loads(response_text)
+            if not isinstance(products, list):
+                raise ValueError("Ответ Claude не является списком")
 
-                # Claude Sonnet 4 может обернуть JSON в markdown блок
-                if response_text.strip().startswith('```'):
-                    # Извлекаем JSON из markdown блока
-                    lines = response_text.strip().split('\n')
-                    json_lines = []
-                    in_json = False
-                    for line in lines:
-                        if line.strip() == '```json' or line.strip() == '```':
-                            in_json = not in_json
-                            continue
-                        if in_json or (not line.startswith('```')):
-                            json_lines.append(line)
-                    response_text = '\n'.join(json_lines)
+            # Собираем все использованные индексы
+            all_used_indexes = []
+            for product in products:
+                original_indexes = product.get('image_indexes', [])
+                valid_indexes = []
 
-                groups = json.loads(response_text)
+                for idx in original_indexes:
+                    if isinstance(idx, int) and 0 <= idx <= max_valid_index:
+                        valid_indexes.append(idx)
+                        all_used_indexes.append(idx)
+                    else:
+                        logger.warning(
+                            f"⚠️ Товар {product.get('title', '?')}: неверный индекс {idx}, максимальный = {max_valid_index}")
 
-                # Дополнительная валидация индексов
-                max_valid_index = len(image_batch) - 1
-                logger.info(
-                    f"🔧 Валидация индексов: максимальный допустимый индекс = {max_valid_index}")
-
-                # Собираем все использованные индексы (КАК В ОСНОВНОЙ ВЕРСИИ)
-                all_used_indexes = []
-                for group in groups:
-                    original_indexes = group.get('image_indexes', [])
-                    valid_indexes = []
-
-                    for idx in original_indexes:
-                        if isinstance(idx, int) and 0 <= idx <= max_valid_index:
-                            valid_indexes.append(idx)
-                            all_used_indexes.append(idx)
-                        else:
-                            logger.warning(
-                                f"⚠️ Группа {group.get('title', '?')}: неверный индекс {idx}, максимальный = {max_valid_index}")
-
-                    group['image_indexes'] = valid_indexes
-                    if original_indexes != valid_indexes:
-                        logger.info(
-                            f"✅ Группа {group.get('title', '?')}: исправлены индексы {original_indexes} → {valid_indexes}")
-
-                # Проверяем на пропущенные и дублированные индексы
-                expected_indexes = set(range(len(image_batch)))
-                used_indexes = set(all_used_indexes)
-                missing_indexes = expected_indexes - used_indexes
-                duplicate_indexes = [
-                    idx for idx in all_used_indexes if all_used_indexes.count(idx) > 1]
-
-                if missing_indexes:
-                    logger.warning(
-                        f"⚠️ Пропущенные индексы: {sorted(missing_indexes)}")
-                if duplicate_indexes:
-                    logger.warning(
-                        f"⚠️ Дублированные индексы: {sorted(set(duplicate_indexes))}")
-
-                logger.info(
-                    f"📊 Статистика индексов: использовано {len(used_indexes)}/{len(expected_indexes)}")
-
-                # Детальное логирование для отладки frontend
-                logger.info(f"🔍 ДЕТАЛЬНАЯ ИНФОРМАЦИЯ ДЛЯ FRONTEND:")
-                logger.info(f"  📁 Количество image_batch: {len(image_batch)}")
-                logger.info(f"  🔗 Будет создано image_urls:")
-                for i, (_, filename) in enumerate(image_batch):
-                    url = f"/debug-files/{session_id}/{i:02d}.webp"
-                    logger.info(f"    image_urls[{i}] = {url}")
-
-                logger.info(f"  📋 Группы и их индексы:")
-                for group in groups:
-                    group_id = group.get('group_id', '?')
-                    title = group.get('title', 'Без названия')
-                    indexes = group.get('image_indexes', [])
+                product['image_indexes'] = valid_indexes
+                if original_indexes != valid_indexes:
                     logger.info(
-                        f"    Группа {group_id} ({title}): индексы {indexes}")
-                    for idx in indexes:
-                        if 0 <= idx < len(image_batch):
-                            _, filename = image_batch[idx]
-                            expected_url = f"/debug-files/{session_id}/{idx:02d}.webp"
-                            logger.info(f"      Индекс {idx} → {expected_url}")
+                        f"✅ Товар {product.get('title', '?')}: исправлены индексы {original_indexes} → {valid_indexes}")
 
-                return JSONResponse({
-                    "success": True,
-                    "diagnostic_mode": "grouping",
-                    "total_images": len(image_batch),
-                    "groups": groups,
-                    "raw_response": response_text,
-                    "debug_folder": debug_folder,
-                    "session_id": session_id,
-                    "file_order": [{"index": i, "filename": filename} for i, (_, filename) in enumerate(image_batch)],
-                    "image_urls": [f"/debug-files/{session_id}/{i:02d}.webp" for i, (_, filename) in enumerate(image_batch)],
-                    "message": "Диагностика группировки завершена"
+            # Проверяем на пропущенные и дублированные индексы
+            expected_indexes = set(range(len(image_batch)))
+            used_indexes = set(all_used_indexes)
+            missing_indexes = expected_indexes - used_indexes
+            duplicate_indexes = [
+                idx for idx in all_used_indexes if all_used_indexes.count(idx) > 1]
+
+            if missing_indexes:
+                logger.warning(
+                    f"⚠️ Пропущенные индексы: {sorted(missing_indexes)}")
+            if duplicate_indexes:
+                logger.warning(
+                    f"⚠️ Дублированные индексы: {sorted(set(duplicate_indexes))}")
+
+            logger.info(
+                f"📊 Статистика индексов: использовано {len(used_indexes)}/{len(expected_indexes)}")
+
+            # Формируем результаты по группам товаров
+            results = []
+
+            for product_idx, product in enumerate(products):
+                title = product.get('title', f'Товар {product_idx + 1}')
+                category = product.get('category', 'Разное')
+                subcategory = product.get('subcategory', '')
+                color = product.get('color', '')
+                image_indexes = product.get(
+                    'image_indexes', [])  # Уже валидированы выше
+
+                logger.info(
+                    f"🔍 Обрабатываем товар {product_idx}: '{title}' с индексами {image_indexes}")
+
+                # Используем уже валидированные индексы без повторной проверки
+                valid_indexes = image_indexes
+
+                # Если нет валидных индексов, используем первый доступный
+                if not valid_indexes and file_info:
+                    valid_indexes = [0]
+                    logger.info(
+                        f"✅ Fallback: назначен индекс 0 для товара '{title}'")
+
+                # Собираем изображения для этого товара
+                product_images = []
+                image_filenames = []
+
+                for img_idx in valid_indexes:
+                    if img_idx < len(file_info):
+                        info = file_info[img_idx]
+                        image_base64 = base64.b64encode(
+                            info['contents']).decode('utf-8')
+                        product_images.append(
+                            f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
+                        image_filenames.append(info['filename'])
+                        logger.info(
+                            f"  ✅ Добавлено изображение {img_idx}: {info['filename']}")
+
+                if not product_images and file_info:  # Fallback если нет изображений
+                    info = file_info[0]
+                    image_base64 = base64.b64encode(
+                        info['contents']).decode('utf-8')
+                    product_images.append(
+                        f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
+                    valid_indexes = [0]
+                    image_filenames = [info['filename']]
+
+                logger.info(
+                    f"  📸 Итого изображений для '{title}': {len(product_images)} ({image_filenames})")
+
+                # Создаем краткое описание товара
+                description_parts = [f"🏷️ {title}"]
+                if color:
+                    description_parts.append(f"🎨 Цвет: {color}")
+                description_parts.append(f"📂 {category}")
+                if subcategory:
+                    description_parts.append(f"📂 {subcategory}")
+
+                description = "\n".join(description_parts)
+
+                results.append({
+                    "id": f"product_{product_idx}_{int(time.time())}",
+                    "filename": f"grouped_product_{product_idx}",
+                    "width": 800,
+                    "height": 600,
+                    "size_bytes": sum(file_info[i]['size'] for i in valid_indexes if i < len(file_info)),
+                    "images": product_images,
+                    "image_preview": product_images[0] if product_images else "",
+                    "description": description,
+                    "title": title,
+                    "category": category,
+                    "subcategory": subcategory,
+                    "color": color,
+                    "image_indexes": valid_indexes
                 })
 
-            except json.JSONDecodeError as e:
-                logger.error(f"❌ Ошибка парсинга JSON: {e}")
-                return JSONResponse({
-                    "success": False,
-                    "error": f"Ошибка парсинга JSON: {e}",
-                    "raw_response": response_text,
-                    "debug_folder": debug_folder,
-                    "session_id": session_id
-                })
+            # ИСПРАВЛЕНИЕ: Перенесли логирование и return ПОСЛЕ цикла for
+            logger.info(f"✅ Сформировано {len(results)} товарных групп")
 
-        except Exception as e:
-            logger.error(f"❌ Ошибка запроса к Claude: {e}")
+            return JSONResponse({
+                "success": True,
+                "diagnostic_mode": "grouping",
+                "total_images": len(image_batch),
+                "groups": results,
+                "raw_response": response_text,
+                "debug_folder": debug_folder,
+                "session_id": session_id,
+                "file_order": [{"index": i, "filename": filename} for i, (_, filename) in enumerate(image_batch)],
+                "image_urls": [f"/debug-files/{session_id}/{i:02d}.webp" for i, (_, filename) in enumerate(image_batch)],
+                "message": "Диагностика группировки завершена"
+            })
+
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА ПАРСИНГА JSON: {e}")
+            logger.error(f"🔍 ПОЛНЫЙ ОТВЕТ CLAUDE: {response_text}")
+            logger.error(f"🔍 ТИП ОТВЕТА: {type(response_text)}")
+            logger.error(f"🔍 ДЛИНА ОТВЕТА: {len(response_text)} символов")
+            # НЕ ИСПОЛЬЗУЕМ FALLBACK! Возвращаем ошибку как в диагностике
             return JSONResponse({
                 "success": False,
-                "error": f"Ошибка Claude API: {str(e)}"
+                "error": f"Ошибка парсинга JSON от Claude: {str(e)}",
+                "raw_response": response_text,
+                "debug_folder": debug_folder,
+                "session_id": session_id
             }, status_code=500)
+
+        # НЕТ FALLBACK! Если дошли сюда, значит есть ошибка в логике
+        logger.error("❌ НЕДОСТИЖИМЫЙ КОД: дошли до конца функции без return")
+        return JSONResponse({
+            "success": False,
+            "error": "Внутренняя ошибка: недостижимый код выполнен"
+        }, status_code=500)
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка запроса к Claude: {e}")
+        return JSONResponse({
+            "success": False,
+            "error": f"Ошибка Claude API: {str(e)}"
+        }, status_code=500)
 
     except Exception as e:
         logger.error(
