@@ -832,6 +832,22 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
             logger.info(f"🔍 ПОЛНЫЙ ОТВЕТ: {response_text}")
 
             # Парсим JSON ответ
+            # Сначала проверяем на markdown блоки
+            if response_text.strip().startswith('```'):
+                # Извлекаем JSON из markdown блока
+                lines = response_text.strip().split('\n')
+                json_lines = []
+                in_json = False
+                for line in lines:
+                    if line.strip() == '```json' or line.strip() == '```':
+                        in_json = not in_json
+                        continue
+                    if in_json or (not line.startswith('```')):
+                        json_lines.append(line)
+                response_text = '\n'.join(json_lines)
+                logger.info(
+                    f"🔧 Извлечен JSON из markdown блока, новая длина: {len(response_text)}")
+
             products = json.loads(response_text)
             if not isinstance(products, list):
                 raise ValueError("Ответ Claude не является списком")
@@ -1306,6 +1322,22 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
             logger.info(f"🔍 ПОЛНЫЙ ОТВЕТ: {response_text}")
 
             # Парсим JSON ответ - ПРОСТОЙ ПОДХОД КАК В ДИАГНОСТИКЕ
+            # Но сначала проверяем на markdown блоки
+            if response_text.strip().startswith('```'):
+                # Извлекаем JSON из markdown блока
+                lines = response_text.strip().split('\n')
+                json_lines = []
+                in_json = False
+                for line in lines:
+                    if line.strip() == '```json' or line.strip() == '```':
+                        in_json = not in_json
+                        continue
+                    if in_json or (not line.startswith('```')):
+                        json_lines.append(line)
+                response_text = '\n'.join(json_lines)
+                logger.info(
+                    f"🔧 Извлечен JSON из markdown блока, новая длина: {len(response_text)}")
+
             products = json.loads(response_text)
             if not isinstance(products, list):
                 raise ValueError("Ответ Claude не является списком")
