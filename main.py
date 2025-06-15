@@ -2199,6 +2199,790 @@ async def file_browser():
     """)
 
 
+@app.post("/api/analyze-product-detailed")
+async def analyze_product_detailed(files: List[UploadFile] = File(...)):
+    """Детальный анализ одного товара с множественными фотографиями"""
+    try:
+        logger.info(
+            f"🔍 ДЕТАЛЬНЫЙ АНАЛИЗ ТОВАРА: Получено {len(files)} фотографий")
+
+        # Собираем все валидные изображения
+        image_batch = []
+        file_info = []
+
+        for file in files:
+            if not file.content_type or not file.content_type.startswith('image/'):
+                logger.warning(
+                    f"⚠️ Пропускаем {file.filename} - неверный тип: {file.content_type}")
+                continue
+
+            try:
+                contents = await file.read()
+                if len(contents) > 20 * 1024 * 1024:  # 20MB
+                    logger.warning(
+                        f"⚠️ Пропускаем {file.filename} - слишком большой: {len(contents)/1024/1024:.1f}MB")
+                    continue
+
+                image_batch.append((contents, file.filename))
+                file_info.append({
+                    'filename': file.filename,
+                    'content_type': file.content_type,
+                    'size': len(contents),
+                    'contents': contents
+                })
+
+            except Exception as file_error:
+                logger.error(
+                    f"❌ Ошибка чтения файла {file.filename}: {file_error}")
+                continue
+
+        if not image_batch:
+            raise HTTPException(
+                status_code=400, detail="Нет валидных изображений")
+
+        # Сохраняем отладочные файлы
+        session_id = f"detailed_{int(time.time())}_{len(image_batch)}"
+        debug_folder = save_debug_files(image_batch, session_id)
+
+        # Подготавливаем изображения для анализа
+        image_contents = []
+        for i, (image_data, filename) in enumerate(image_batch):
+            logger.info(f"🖼️ Обработка изображения {i}: {filename}")
+
+            resized_image_data, mime_type = resize_image_for_claude(
+                image_data, max_size=2000)
+            base64_image = base64.b64encode(resized_image_data).decode('utf-8')
+
+            image_contents.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime_type,
+                    "data": base64_image
+                }
+            })
+
+        # Детальный промпт для анализа товара
+        detailed_prompt = f"""Проанализируй эти {len(image_batch)} фотографий ОДНОГО товара и заполни максимально подробную информацию.
+
+ЗАДАЧА: Создать детальное описание товара для объявления на сайте Somon.tj
+
+Верни результат в JSON формате:
+{{
+  "title": "Точное название товара с брендом и моделью",
+  "brand": "Бренд/производитель",
+  "model": "Модель/артикул",
+  "category": "Основная категория",
+  "subcategory": "Подкатегория",
+  "condition": "Состояние (новый/б/у/отличное/хорошее/удовлетворительное)",
+  "color": "Основной цвет",
+  "material": "Материал изготовления",
+  "size": "Размер/габариты",
+  "weight": "Вес (если видно)",
+  "year": "Год выпуска (если определим)",
+  "country": "Страна производства (если видно)",
+  "features": ["список", "ключевых", "особенностей", "и", "функций"],
+  "included": ["что", "входит", "в", "комплект"],
+  "defects": ["видимые", "дефекты", "или", "износ"],
+  "description": "Подробное описание товара для объявления",
+  "keywords": ["ключевые", "слова", "для", "поиска"],
+  "estimated_price_range": "Примерная ценовая категория",
+  "target_audience": "Целевая аудитория",
+  "usage_tips": "Советы по использованию",
+  "care_instructions": "Инструкции по уходу",
+  "compatibility": "Совместимость с другими товарами",
+  "technical_specs": {{
+    "spec1": "значение1",
+    "spec2": "значение2"
+  }},
+  "photo_analysis": {{
+    "main_photo": "номер лучшего фото для главного изображения (0-{len(image_batch)-1})",
+    "photo_descriptions": ["описание фото 0", "описание фото 1", "..."]
+  }}
+}}
+
+ВАЖНО:
+- Анализируй ВСЕ детали на фотографиях
+- Читай все надписи, этикетки, бирки
+- Определяй технические характеристики
+- Оценивай состояние и дефекты
+- Предлагай лучшее фото для главного изображения
+- Если информация не видна, указывай "не определено"
+"""
+
+        try:
+            # Инициализация клиента
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            if not api_key:
+                logger.error("❌ API ключ Anthropic не настроен!")
+                raise ValueError(
+                    "API ключ Anthropic не настроен в переменных окружения")
+
+            client = anthropic.Anthropic(
+                api_key=api_key,
+                timeout=120.0,
+                max_retries=2
+            )
+
+            logger.info("🚀 ОТПРАВЛЯЕМ ДЕТАЛЬНЫЙ ЗАПРОС В CLAUDE API...")
+
+            message = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=8192,
+                temperature=0.1,  # Низкая температура для точности
+                system="""Ты эксперт по анализу товаров для интернет-магазина. Твоя задача - создать максимально подробное и точное описание товара на основе фотографий.
+
+Принципы анализа:
+- Внимательно изучай каждую деталь на фотографиях
+- Читай все видимые надписи, этикетки, бирки
+- Определяй бренд, модель, технические характеристики
+- Оценивай состояние и выявляй дефекты
+- Анализируй материалы, цвета, размеры
+- Определяй комплектность и аксессуары
+- Предлагай ключевые слова для поиска
+- Создавай привлекательное описание для покупателей
+
+Будь максимально точным и детальным в анализе.""",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            *image_contents,
+                            {
+                                "type": "text",
+                                "text": detailed_prompt
+                            }
+                        ],
+                    }
+                ],
+            )
+
+            response_text = message.content[0].text
+            logger.info(
+                f"✅ ПОЛУЧЕН ДЕТАЛЬНЫЙ ОТВЕТ! Длина: {len(response_text)} символов")
+
+            # Проверяем что ответ не является HTML
+            if response_text.strip().startswith('<'):
+                logger.error("❌ ПОЛУЧЕН HTML ВМЕСТО JSON!")
+                raise ValueError("Claude вернул HTML вместо JSON")
+
+            # Извлекаем JSON
+            if response_text.strip().startswith('```'):
+                lines = response_text.strip().split('\n')
+                json_lines = []
+                in_json = False
+                for line in lines:
+                    if line.strip() == '```json' or (line.strip() == '```' and in_json):
+                        in_json = not in_json
+                        continue
+                    if in_json:
+                        json_lines.append(line)
+                response_text = '\n'.join(json_lines)
+            else:
+                # Ищем JSON в тексте
+                start_idx = response_text.find('{')
+                end_idx = response_text.rfind('}')
+                if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
+                    response_text = response_text[start_idx:end_idx+1]
+
+            product_data = json.loads(response_text)
+
+            # Добавляем изображения к результату
+            product_images = []
+            for i, info in enumerate(file_info):
+                image_base64 = base64.b64encode(
+                    info['contents']).decode('utf-8')
+                product_images.append({
+                    "index": i,
+                    "filename": info['filename'],
+                    "data": f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}",
+                    "size": info['size']
+                })
+
+            result = {
+                "success": True,
+                "product": product_data,
+                "images": product_images,
+                "total_images": len(product_images),
+                "debug_folder": debug_folder,
+                "session_id": session_id
+            }
+
+            logger.info(
+                f"✅ Детальный анализ завершен: {product_data.get('title', 'Товар')}")
+            return JSONResponse(result)
+
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.error(f"❌ ОШИБКА ПАРСИНГА JSON: {e}")
+            return JSONResponse({
+                "success": False,
+                "error": f"Ошибка парсинга ответа Claude: {str(e)}",
+                "raw_response": response_text,
+                "debug_folder": debug_folder,
+                "session_id": session_id
+            }, status_code=500)
+
+    except Exception as e:
+        logger.error(
+            f"❌ Ошибка детального анализа: {e}\n{traceback.format_exc()}")
+        return JSONResponse({
+            "success": False,
+            "error": f"Ошибка сервера: {str(e)}"
+        }, status_code=500)
+
+
+@app.get("/product-analyzer", response_class=HTMLResponse)
+async def product_analyzer_page():
+    """Страница детального анализа товара"""
+    return HTMLResponse("""
+    <!DOCTYPE html>
+    <html lang="ru">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Анализатор товаров - Somon.tj</title>
+        <style>
+            * {
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }
+            
+            body {
+                font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                min-height: 100vh;
+                padding: 20px;
+            }
+            
+            .container {
+                max-width: 1200px;
+                margin: 0 auto;
+                background: white;
+                border-radius: 20px;
+                box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+                overflow: hidden;
+            }
+            
+            .header {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 30px;
+                text-align: center;
+            }
+            
+            .header h1 {
+                font-size: 2.5rem;
+                margin-bottom: 10px;
+            }
+            
+            .header p {
+                font-size: 1.1rem;
+                opacity: 0.9;
+            }
+            
+            .content {
+                padding: 40px;
+            }
+            
+            .upload-section {
+                background: #f8f9fa;
+                border: 3px dashed #dee2e6;
+                border-radius: 15px;
+                padding: 40px;
+                text-align: center;
+                margin-bottom: 30px;
+                transition: all 0.3s ease;
+            }
+            
+            .upload-section:hover {
+                border-color: #667eea;
+                background: #f0f2ff;
+            }
+            
+            .upload-section.dragover {
+                border-color: #667eea;
+                background: #e3f2fd;
+                transform: scale(1.02);
+            }
+            
+            .upload-icon {
+                font-size: 4rem;
+                color: #667eea;
+                margin-bottom: 20px;
+            }
+            
+            .upload-text {
+                font-size: 1.2rem;
+                color: #495057;
+                margin-bottom: 20px;
+            }
+            
+            .file-input {
+                display: none;
+            }
+            
+            .upload-btn {
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                border: none;
+                padding: 15px 30px;
+                border-radius: 25px;
+                font-size: 1.1rem;
+                cursor: pointer;
+                transition: transform 0.2s ease;
+            }
+            
+            .upload-btn:hover {
+                transform: translateY(-2px);
+            }
+            
+            .preview-section {
+                display: none;
+                margin-bottom: 30px;
+            }
+            
+            .preview-grid {
+                display: grid;
+                grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+                gap: 15px;
+                margin-bottom: 20px;
+            }
+            
+            .preview-item {
+                position: relative;
+                border-radius: 10px;
+                overflow: hidden;
+                box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+            }
+            
+            .preview-img {
+                width: 100%;
+                height: 150px;
+                object-fit: cover;
+            }
+            
+            .remove-btn {
+                position: absolute;
+                top: 5px;
+                right: 5px;
+                background: rgba(255,0,0,0.8);
+                color: white;
+                border: none;
+                border-radius: 50%;
+                width: 25px;
+                height: 25px;
+                cursor: pointer;
+                font-size: 12px;
+            }
+            
+            .analyze-btn {
+                background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+                color: white;
+                border: none;
+                padding: 15px 40px;
+                border-radius: 25px;
+                font-size: 1.2rem;
+                cursor: pointer;
+                width: 100%;
+                margin-bottom: 20px;
+                transition: transform 0.2s ease;
+            }
+            
+            .analyze-btn:hover {
+                transform: translateY(-2px);
+            }
+            
+            .analyze-btn:disabled {
+                background: #6c757d;
+                cursor: not-allowed;
+                transform: none;
+            }
+            
+            .loading {
+                display: none;
+                text-align: center;
+                padding: 40px;
+            }
+            
+            .spinner {
+                border: 4px solid #f3f3f3;
+                border-top: 4px solid #667eea;
+                border-radius: 50%;
+                width: 50px;
+                height: 50px;
+                animation: spin 1s linear infinite;
+                margin: 0 auto 20px;
+            }
+            
+            @keyframes spin {
+                0% { transform: rotate(0deg); }
+                100% { transform: rotate(360deg); }
+            }
+            
+            .results {
+                display: none;
+            }
+            
+            .result-section {
+                background: #f8f9fa;
+                border-radius: 15px;
+                padding: 25px;
+                margin-bottom: 20px;
+            }
+            
+            .result-title {
+                font-size: 1.3rem;
+                font-weight: bold;
+                color: #495057;
+                margin-bottom: 15px;
+                border-bottom: 2px solid #667eea;
+                padding-bottom: 5px;
+            }
+            
+            .field-group {
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+                gap: 20px;
+                margin-bottom: 20px;
+            }
+            
+            .field {
+                background: white;
+                padding: 15px;
+                border-radius: 10px;
+                border-left: 4px solid #667eea;
+            }
+            
+            .field-label {
+                font-weight: bold;
+                color: #495057;
+                margin-bottom: 5px;
+            }
+            
+            .field-value {
+                color: #6c757d;
+                line-height: 1.5;
+            }
+            
+            .tags {
+                display: flex;
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+            
+            .tag {
+                background: #e9ecef;
+                color: #495057;
+                padding: 5px 12px;
+                border-radius: 15px;
+                font-size: 0.9rem;
+            }
+            
+            .error {
+                background: #f8d7da;
+                color: #721c24;
+                padding: 15px;
+                border-radius: 10px;
+                margin: 20px 0;
+                border-left: 4px solid #dc3545;
+            }
+            
+            .back-btn {
+                background: #6c757d;
+                color: white;
+                border: none;
+                padding: 10px 20px;
+                border-radius: 20px;
+                text-decoration: none;
+                display: inline-block;
+                margin-bottom: 20px;
+                transition: background 0.2s ease;
+            }
+            
+            .back-btn:hover {
+                background: #5a6268;
+                color: white;
+                text-decoration: none;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🔍 Анализатор товаров</h1>
+                <p>Загрузите фотографии одного товара для детального анализа</p>
+            </div>
+            
+            <div class="content">
+                <a href="/" class="back-btn">← Назад к главной</a>
+                
+                <div class="upload-section" id="uploadSection">
+                    <div class="upload-icon">📸</div>
+                    <div class="upload-text">
+                        Перетащите фотографии сюда или нажмите для выбора
+                    </div>
+                    <button class="upload-btn" onclick="document.getElementById('fileInput').click()">
+                        Выбрать фотографии
+                    </button>
+                    <input type="file" id="fileInput" class="file-input" multiple accept="image/*">
+                </div>
+                
+                <div class="preview-section" id="previewSection">
+                    <div class="preview-grid" id="previewGrid"></div>
+                    <button class="analyze-btn" id="analyzeBtn" onclick="analyzeProduct()">
+                        🔍 Анализировать товар
+                    </button>
+                </div>
+                
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <p>Анализируем ваш товар... Это может занять до 2 минут</p>
+                </div>
+                
+                <div class="results" id="results"></div>
+            </div>
+        </div>
+
+        <script>
+            let selectedFiles = [];
+            
+            // Обработка drag & drop
+            const uploadSection = document.getElementById('uploadSection');
+            
+            uploadSection.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                uploadSection.classList.add('dragover');
+            });
+            
+            uploadSection.addEventListener('dragleave', () => {
+                uploadSection.classList.remove('dragover');
+            });
+            
+            uploadSection.addEventListener('drop', (e) => {
+                e.preventDefault();
+                uploadSection.classList.remove('dragover');
+                handleFiles(e.dataTransfer.files);
+            });
+            
+            // Обработка выбора файлов
+            document.getElementById('fileInput').addEventListener('change', (e) => {
+                handleFiles(e.target.files);
+            });
+            
+            function handleFiles(files) {
+                selectedFiles = Array.from(files);
+                displayPreviews();
+            }
+            
+            function displayPreviews() {
+                const previewGrid = document.getElementById('previewGrid');
+                const previewSection = document.getElementById('previewSection');
+                
+                previewGrid.innerHTML = '';
+                
+                if (selectedFiles.length === 0) {
+                    previewSection.style.display = 'none';
+                    return;
+                }
+                
+                previewSection.style.display = 'block';
+                
+                selectedFiles.forEach((file, index) => {
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const previewItem = document.createElement('div');
+                        previewItem.className = 'preview-item';
+                        previewItem.innerHTML = `
+                            <img src="${e.target.result}" class="preview-img" alt="Preview ${index + 1}">
+                            <button class="remove-btn" onclick="removeFile(${index})">×</button>
+                        `;
+                        previewGrid.appendChild(previewItem);
+                    };
+                    reader.readAsDataURL(file);
+                });
+            }
+            
+            function removeFile(index) {
+                selectedFiles.splice(index, 1);
+                displayPreviews();
+            }
+            
+            async function analyzeProduct() {
+                if (selectedFiles.length === 0) {
+                    alert('Пожалуйста, выберите фотографии для анализа');
+                    return;
+                }
+                
+                const analyzeBtn = document.getElementById('analyzeBtn');
+                const loading = document.getElementById('loading');
+                const results = document.getElementById('results');
+                
+                analyzeBtn.disabled = true;
+                loading.style.display = 'block';
+                results.style.display = 'none';
+                
+                try {
+                    const formData = new FormData();
+                    selectedFiles.forEach(file => {
+                        formData.append('files', file);
+                    });
+                    
+                    const response = await fetch('/api/analyze-product-detailed', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        displayResults(data);
+                    } else {
+                        throw new Error(data.error || 'Ошибка анализа');
+                    }
+                } catch (error) {
+                    console.error('Ошибка:', error);
+                    results.innerHTML = `<div class="error">❌ Ошибка: ${error.message}</div>`;
+                    results.style.display = 'block';
+                } finally {
+                    analyzeBtn.disabled = false;
+                    loading.style.display = 'none';
+                }
+            }
+            
+            function displayResults(data) {
+                const results = document.getElementById('results');
+                const product = data.product;
+                
+                results.innerHTML = `
+                    <div class="result-section">
+                        <div class="result-title">📋 Основная информация</div>
+                        <div class="field-group">
+                            <div class="field">
+                                <div class="field-label">Название товара</div>
+                                <div class="field-value">${product.title || 'Не определено'}</div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">Бренд</div>
+                                <div class="field-value">${product.brand || 'Не определено'}</div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">Модель</div>
+                                <div class="field-value">${product.model || 'Не определено'}</div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">Категория</div>
+                                <div class="field-value">${product.category || 'Не определено'}</div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">Подкатегория</div>
+                                <div class="field-value">${product.subcategory || 'Не определено'}</div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">Состояние</div>
+                                <div class="field-value">${product.condition || 'Не определено'}</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="result-section">
+                        <div class="result-title">🎨 Характеристики</div>
+                        <div class="field-group">
+                            <div class="field">
+                                <div class="field-label">Цвет</div>
+                                <div class="field-value">${product.color || 'Не определено'}</div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">Материал</div>
+                                <div class="field-value">${product.material || 'Не определено'}</div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">Размер</div>
+                                <div class="field-value">${product.size || 'Не определено'}</div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">Вес</div>
+                                <div class="field-value">${product.weight || 'Не определено'}</div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">Год выпуска</div>
+                                <div class="field-value">${product.year || 'Не определено'}</div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">Страна производства</div>
+                                <div class="field-value">${product.country || 'Не определено'}</div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="result-section">
+                        <div class="result-title">📝 Описание</div>
+                        <div class="field">
+                            <div class="field-value">${product.description || 'Описание не создано'}</div>
+                        </div>
+                    </div>
+                    
+                    <div class="result-section">
+                        <div class="result-title">⭐ Особенности</div>
+                        <div class="tags">
+                            ${(product.features || []).map(feature => `<span class="tag">${feature}</span>`).join('')}
+                        </div>
+                    </div>
+                    
+                    <div class="result-section">
+                        <div class="result-title">📦 Комплектация</div>
+                        <div class="tags">
+                            ${(product.included || []).map(item => `<span class="tag">${item}</span>`).join('')}
+                        </div>
+                    </div>
+                    
+                    <div class="result-section">
+                        <div class="result-title">🔍 Ключевые слова</div>
+                        <div class="tags">
+                            ${(product.keywords || []).map(keyword => `<span class="tag">${keyword}</span>`).join('')}
+                        </div>
+                    </div>
+                    
+                    ${product.defects && product.defects.length > 0 ? `
+                    <div class="result-section">
+                        <div class="result-title">⚠️ Дефекты</div>
+                        <div class="tags">
+                            ${product.defects.map(defect => `<span class="tag" style="background: #f8d7da; color: #721c24;">${defect}</span>`).join('')}
+                        </div>
+                    </div>
+                    ` : ''}
+                    
+                    <div class="result-section">
+                        <div class="result-title">💡 Дополнительная информация</div>
+                        <div class="field-group">
+                            <div class="field">
+                                <div class="field-label">Ценовая категория</div>
+                                <div class="field-value">${product.estimated_price_range || 'Не определено'}</div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">Целевая аудитория</div>
+                                <div class="field-value">${product.target_audience || 'Не определено'}</div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">Советы по использованию</div>
+                                <div class="field-value">${product.usage_tips || 'Не указано'}</div>
+                            </div>
+                            <div class="field">
+                                <div class="field-label">Уход</div>
+                                <div class="field-value">${product.care_instructions || 'Не указано'}</div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                results.style.display = 'block';
+            }
+        </script>
+    </body>
+    </html>
+    """)
+
+
 if __name__ == "__main__":
     import uvicorn
     logger.info("🚀 Запускаем сервер AIТовар.tj...")
