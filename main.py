@@ -836,6 +836,11 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
             if not isinstance(products, list):
                 raise ValueError("Ответ Claude не является списком")
 
+            # Определяем максимальный допустимый индекс
+            max_valid_index = len(image_batch) - 1
+            logger.info(
+                f"🔧 Валидация индексов: максимальный допустимый индекс = {max_valid_index}")
+
             # Собираем все использованные индексы
             all_used_indexes = []
             for product in products:
