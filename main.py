@@ -758,8 +758,8 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                 }
             })
 
-        # ДИАГНОСТИЧЕСКИЙ промпт для группировки
-        diagnostic_prompt = f"""ДИАГНОСТИКА ГРУППИРОВКИ: Проанализируйте эти {len(image_batch)} изображений и сгруппируйте ОДИНАКОВЫЕ товары.
+        # ДИАГНОСТИЧЕСКИЙ промпт для группировки - ТОЧНО КАК В ОСНОВНОЙ ВЕРСИИ
+        diagnostic_prompt = f"""ГРУППИРОВКА ТОВАРОВ: Проанализируйте эти {len(image_batch)} изображений и сгруппируйте ОДИНАКОВЫЕ товары.
 
 КРИТИЧЕСКИ ВАЖНО: Изображения пронумерованы от 0 до {len(image_batch)-1} (всего {len(image_batch)} изображений).
 
@@ -776,21 +776,19 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
 3. Разные модели/цвета/размеры = разные товары
 4. При малейшем сомнении - лучше разделить
 
+Используйте категории: {SOMON_CATEGORIES}
+
 ФОРМАТ ОТВЕТА - детальный JSON с объяснениями:
 [
   {{
     "group_id": 1,
     "title": "Название товара",
+    "category": "Категория",
+    "subcategory": "Подкатегория",
+    "color": "цвет",
     "reasoning": "Почему эти изображения сгруппированы вместе",
-    "image_indexes": [0, 3],
+    "image_indexes": [номера_изображений],
     "description": "Детальное описание товара"
-  }},
-  {{
-    "group_id": 2,
-    "title": "Другой товар",
-    "reasoning": "Почему это отдельный товар",
-    "image_indexes": [1],
-    "description": "Описание второго товара"
   }}
 ]
 
@@ -858,7 +856,7 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                 logger.info(
                     f"🔧 Валидация индексов: максимальный допустимый индекс = {max_valid_index}")
 
-                # Собираем все использованные индексы
+                # Собираем все использованные индексы (КАК В ОСНОВНОЙ ВЕРСИИ)
                 all_used_indexes = []
                 for group in groups:
                     original_indexes = group.get('image_indexes', [])
@@ -870,12 +868,12 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                             all_used_indexes.append(idx)
                         else:
                             logger.warning(
-                                f"⚠️ Группа {group.get('group_id', '?')}: неверный индекс {idx}, максимальный = {max_valid_index}")
+                                f"⚠️ Группа {group.get('title', '?')}: неверный индекс {idx}, максимальный = {max_valid_index}")
 
                     group['image_indexes'] = valid_indexes
                     if original_indexes != valid_indexes:
                         logger.info(
-                            f"✅ Группа {group.get('group_id', '?')}: исправлены индексы {original_indexes} → {valid_indexes}")
+                            f"✅ Группа {group.get('title', '?')}: исправлены индексы {original_indexes} → {valid_indexes}")
 
                 # Проверяем на пропущенные и дублированные индексы
                 expected_indexes = set(range(len(image_batch)))
@@ -1208,21 +1206,21 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
             # Собираем все использованные индексы
             all_used_indexes = []
             for product in products:
-                 original_indexes = product.get('image_indexes', [])
-                  valid_indexes = []
+                original_indexes = product.get('image_indexes', [])
+                valid_indexes = []
 
-                   for idx in original_indexes:
-                        if isinstance(idx, int) and 0 <= idx <= max_valid_index:
-                            valid_indexes.append(idx)
-                            all_used_indexes.append(idx)
-                        else:
-                            logger.warning(
-                                f"⚠️ Товар {product.get('title', '?')}: неверный индекс {idx}, максимальный = {max_valid_index}")
+                for idx in original_indexes:
+                    if isinstance(idx, int) and 0 <= idx <= max_valid_index:
+                        valid_indexes.append(idx)
+                        all_used_indexes.append(idx)
+                    else:
+                        logger.warning(
+                            f"⚠️ Товар {product.get('title', '?')}: неверный индекс {idx}, максимальный = {max_valid_index}")
 
-                    product['image_indexes'] = valid_indexes
-                    if original_indexes != valid_indexes:
-                        logger.info(
-                            f"✅ Товар {product.get('title', '?')}: исправлены индексы {original_indexes} → {valid_indexes}")
+                product['image_indexes'] = valid_indexes
+                if original_indexes != valid_indexes:
+                    logger.info(
+                        f"✅ Товар {product.get('title', '?')}: исправлены индексы {original_indexes} → {valid_indexes}")
 
             # Проверяем на пропущенные и дублированные индексы
             expected_indexes = set(range(len(image_batch)))
