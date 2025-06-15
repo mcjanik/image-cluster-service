@@ -12,6 +12,7 @@ from typing import List
 import logging
 import logging.handlers
 import time
+from datetime import datetime
 
 # Создаем папку для логов
 os.makedirs("logs", exist_ok=True)
@@ -46,6 +47,7 @@ app.add_middleware(
 # Создаем папки
 os.makedirs("static", exist_ok=True)
 os.makedirs("uploads", exist_ok=True)
+os.makedirs("debug_images", exist_ok=True)
 
 # Подключаем статические файлы
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -164,6 +166,54 @@ SOMON_CATEGORIES = """Телефоны и связь
 -- Оборудование
 -- Сырьё и материалы для бизнеса
 -- Готовый бизнес в аренду"""
+
+
+def save_debug_files(files_data: List[tuple], session_id: str) -> str:
+    """Сохраняет файлы для отладки и возвращает путь к папке"""
+    try:
+        # Создаем папку для этой сессии
+        session_folder = f"debug_images/{session_id}"
+        os.makedirs(session_folder, exist_ok=True)
+
+        # Сохраняем каждый файл с индексом
+        for idx, (contents, filename) in enumerate(files_data):
+            # Определяем расширение
+            ext = filename.split('.')[-1] if '.' in filename else 'jpg'
+            debug_filename = f"{idx:02d}_{filename}"
+            debug_path = os.path.join(session_folder, debug_filename)
+
+            with open(debug_path, 'wb') as f:
+                f.write(contents)
+
+            logger.info(
+                f"💾 Сохранен файл {idx}: {debug_filename} ({len(contents)} байт)")
+
+        # Создаем файл с метаданными
+        metadata = {
+            "session_id": session_id,
+            "timestamp": datetime.now().isoformat(),
+            "total_files": len(files_data),
+            "files": [
+                {
+                    "index": idx,
+                    "original_filename": filename,
+                    "debug_filename": f"{idx:02d}_{filename}",
+                    "size_bytes": len(contents)
+                }
+                for idx, (contents, filename) in enumerate(files_data)
+            ]
+        }
+
+        metadata_path = os.path.join(session_folder, "metadata.json")
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"📋 Создан файл метаданных: {metadata_path}")
+        return session_folder
+
+    except Exception as e:
+        logger.error(f"❌ Ошибка сохранения отладочных файлов: {e}")
+        return ""
 
 
 def analyze_image_with_claude(image_data: bytes, filename: str) -> str:
@@ -542,6 +592,11 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
             raise HTTPException(
                 status_code=400, detail="Нет валидных изображений для обработки")
 
+        # Сохраняем файлы для отладки
+        session_id = f"{int(time.time())}_{len(image_batch)}"
+        debug_folder = save_debug_files(image_batch, session_id)
+        logger.info(f"🗂️ Отладочные файлы сохранены в: {debug_folder}")
+
         # Batch анализ всех изображений
         claude_response = analyze_images_batch_with_claude(image_batch)
 
@@ -637,6 +692,8 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                     "processed_count": len(results),
                     "total_files": len(files),
                     "grouped": True,
+                    "debug_folder": debug_folder,
+                    "session_id": session_id,
                     "summary": {
                         "total_images": len(files),
                         "processed_images": len(file_info),
@@ -676,6 +733,8 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
             "processed_count": len(results),
             "total_files": len(files),
             "grouped": False,
+            "debug_folder": debug_folder,
+            "session_id": session_id,
             "summary": {
                 "total_images": len(files),
                 "processed_images": len(results)
@@ -914,6 +973,63 @@ async def logs_page():
     </body>
     </html>
     """)
+
+
+@app.get("/debug-files/{session_id}")
+async def get_debug_files(session_id: str):
+    """Получить список отладочных файлов для сессии"""
+    try:
+        debug_folder = f"debug_images/{session_id}"
+        if not os.path.exists(debug_folder):
+            raise HTTPException(status_code=404, detail="Сессия не найдена")
+
+        # Читаем метаданные
+        metadata_path = os.path.join(debug_folder, "metadata.json")
+        if os.path.exists(metadata_path):
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+        else:
+            metadata = {"files": []}
+
+        # Получаем список файлов
+        files = []
+        for filename in os.listdir(debug_folder):
+            if filename != "metadata.json":
+                file_path = os.path.join(debug_folder, filename)
+                files.append({
+                    "filename": filename,
+                    "size": os.path.getsize(file_path),
+                    "url": f"/debug-files/{session_id}/{filename}"
+                })
+
+        return JSONResponse({
+            "success": True,
+            "session_id": session_id,
+            "metadata": metadata,
+            "files": files
+        })
+
+    except Exception as e:
+        logger.error(f"Ошибка получения отладочных файлов: {e}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.get("/debug-files/{session_id}/{filename}")
+async def get_debug_file(session_id: str, filename: str):
+    """Получить конкретный отладочный файл"""
+    try:
+        file_path = f"debug_images/{session_id}/{filename}"
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail="Файл не найден")
+
+        return FileResponse(file_path)
+
+    except Exception as e:
+        logger.error(f"Ошибка получения файла: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 if __name__ == "__main__":
