@@ -77,6 +77,70 @@
             padding: 10px;
             border-radius: 5px;
         }
+
+        .image-preview {
+            max-width: 200px;
+            max-height: 150px;
+            border-radius: 5px;
+            margin: 10px 0;
+            cursor: pointer;
+            border: 2px solid #ddd;
+        }
+
+        .image-preview:hover {
+            border-color: #007bff;
+        }
+
+        .image-container {
+            display: flex;
+            align-items: flex-start;
+            gap: 15px;
+            margin: 10px 0;
+        }
+
+        .image-info {
+            flex: 1;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+        }
+
+        .modal-content {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            max-width: 90%;
+            max-height: 90%;
+        }
+
+        .modal img {
+            max-width: 100%;
+            max-height: 100%;
+            border-radius: 5px;
+        }
+
+        .close {
+            position: absolute;
+            top: 15px;
+            right: 35px;
+            color: #f1f1f1;
+            font-size: 40px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .close:hover {
+            color: #bbb;
+        }
     </style>
 </head>
 
@@ -103,6 +167,14 @@
     </div>
 
     <div id="results"></div>
+
+    <!-- Модальное окно для просмотра изображений -->
+    <div id="imageModal" class="modal">
+        <span class="close">&times;</span>
+        <div class="modal-content">
+            <img id="modalImage" src="" alt="Увеличенное изображение">
+        </div>
+    </div>
 
     <script>
         const uploadArea = document.getElementById('uploadArea');
@@ -178,11 +250,18 @@
             html += `<p><strong>Session ID:</strong> ${data.session_id}</p>`;
 
             data.descriptions.forEach(item => {
+                const imageUrl = data.image_urls && data.image_urls[item.index] ? data.image_urls[item.index] : null;
+
                 html += `
                     <div class="result">
                         <h3>Индекс ${item.index}</h3>
-                        <p><strong>Файл:</strong> ${item.filename}</p>
-                        <p><strong>Описание:</strong> ${item.description}</p>
+                        <div class="image-container">
+                            ${imageUrl ? `<img src="${imageUrl}" alt="Изображение ${item.index}" class="image-preview" onclick="showModal('${imageUrl}')">` : ''}
+                            <div class="image-info">
+                                <p><strong>Файл:</strong> ${item.filename}</p>
+                                <p><strong>Описание:</strong> ${item.description}</p>
+                            </div>
+                        </div>
                     </div>
                 `;
             });
@@ -195,14 +274,22 @@
             html += `<p><strong>Всего изображений:</strong> ${data.total_images}</p>`;
             html += `<p><strong>Session ID:</strong> ${data.session_id}</p>`;
 
-            // Показываем порядок файлов
+            // Показываем порядок файлов с изображениями
             html += `<div class="result"><h3>📋 Порядок файлов</h3>`;
             data.file_order.forEach(file => {
-                html += `<p><strong>Индекс ${file.index}:</strong> ${file.filename}</p>`;
+                const imageUrl = data.image_urls && data.image_urls[file.index] ? data.image_urls[file.index] : null;
+                html += `
+                    <div class="image-container">
+                        ${imageUrl ? `<img src="${imageUrl}" alt="Изображение ${file.index}" class="image-preview" onclick="showModal('${imageUrl}')">` : ''}
+                        <div class="image-info">
+                            <p><strong>Индекс ${file.index}:</strong> ${file.filename}</p>
+                        </div>
+                    </div>
+                `;
             });
             html += `</div>`;
 
-            // Показываем группы
+            // Показываем группы с изображениями
             data.groups.forEach(group => {
                 html += `
                     <div class="result">
@@ -210,6 +297,16 @@
                         <p><strong>Изображения:</strong> ${group.image_indexes.join(', ')}</p>
                         <p><strong>Обоснование:</strong> ${group.reasoning}</p>
                         <p><strong>Описание:</strong> ${group.description}</p>
+                        
+                        <div style="margin-top: 10px;">
+                            <strong>Изображения в группе:</strong>
+                            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 5px;">
+                                ${group.image_indexes.map(index => {
+                    const imageUrl = data.image_urls && data.image_urls[index] ? data.image_urls[index] : null;
+                    return imageUrl ? `<img src="${imageUrl}" alt="Изображение ${index}" class="image-preview" onclick="showModal('${imageUrl}')" style="max-width: 150px; max-height: 100px;">` : `<span>Изображение ${index}</span>`;
+                }).join('')}
+                            </div>
+                        </div>
                     </div>
                 `;
             });
@@ -219,6 +316,36 @@
 
             results.innerHTML = html;
         }
+
+        // Функции для модального окна
+        function showModal(imageUrl) {
+            const modal = document.getElementById('imageModal');
+            const modalImg = document.getElementById('modalImage');
+            modal.style.display = 'block';
+            modalImg.src = imageUrl;
+        }
+
+        // Закрытие модального окна
+        document.addEventListener('DOMContentLoaded', function () {
+            const modal = document.getElementById('imageModal');
+            const closeBtn = document.querySelector('.close');
+
+            closeBtn.onclick = function () {
+                modal.style.display = 'none';
+            }
+
+            modal.onclick = function (event) {
+                if (event.target === modal) {
+                    modal.style.display = 'none';
+                }
+            }
+
+            document.addEventListener('keydown', function (event) {
+                if (event.key === 'Escape') {
+                    modal.style.display = 'none';
+                }
+            });
+        });
     </script>
 </body>
 

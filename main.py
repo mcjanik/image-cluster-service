@@ -684,6 +684,7 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                     "debug_folder": debug_folder,
                     "session_id": session_id,
                     "file_order": [{"index": i, "filename": info['filename']} for i, info in enumerate(file_info)],
+                    "image_urls": [f"/debug-files/{session_id}/{i:02d}_{filename}" for i, (_, filename) in enumerate(image_batch)],
                     "message": "Диагностика группировки завершена"
                 })
 
@@ -843,6 +844,7 @@ async def analyze_individual_images(files: List[UploadFile] = File(...)):
             "descriptions": individual_descriptions,
             "debug_folder": debug_folder,
             "session_id": session_id,
+            "image_urls": [f"/debug-files/{session_id}/{i:02d}_{filename}" for i, (_, filename) in enumerate(image_batch)],
             "message": "Диагностический анализ завершен - каждое изображение описано отдельно"
         })
 
@@ -1017,7 +1019,7 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                     description = "\n".join(description_parts)
 
                     results.append({
-                        "id": f"product_{product_idx}_{int(time.time())}",
+                        "id": f"product_{product_idx}_{int(time())}",
                         "filename": f"grouped_product_{product_idx}",
                         "width": 800,
                         "height": 600,
