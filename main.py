@@ -406,38 +406,31 @@ def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> st
                 }
             })
 
-        # Простой и понятный промпт
-        batch_prompt = f"""Проанализируйте эти изображения товаров и сгруппируйте их по отдельным товарам.
+        # Максимально четкий промпт
+        batch_prompt = f"""Проанализируйте изображения и определите РАЗНЫЕ товары. Каждый уникальный предмет = отдельный товар.
 
-ПРАВИЛА ГРУППИРОВКИ:
-- Один товар может иметь несколько фотографий с разных ракурсов
-- Разные цвета, размеры, модели = разные товары
-- При сомнениях лучше разделить товары
+ПРАВИЛА:
+1. Внимательно смотрите на каждое изображение
+2. Разные типы техники = разные товары (кондиционер ≠ плита ≠ стиральная машина)
+3. Группируйте только ОДИНАКОВЫЕ предметы с разных ракурсов
+4. При малейшем сомнении - разделяйте на отдельные товары
 
-Используйте категории из списка:
-{SOMON_CATEGORIES}
+ВАЖНО: НЕ объединяйте разные устройства в один товар!
 
-Верните ТОЛЬКО JSON массив в формате:
+Используйте категории: {SOMON_CATEGORIES}
+
+Формат ответа - ТОЛЬКО JSON:
 [
   {{
-    "title": "Красный детский стул",
-    "category": "Детский мир", 
-    "subcategory": "Детская мебель",
-    "color": "красный",
-    "image_indexes": [0, 1, 2]
-  }},
-  {{
-    "title": "Синий детский стул",
-    "category": "Детский мир",
-    "subcategory": "Детская мебель", 
-    "color": "синий",
-    "image_indexes": [3, 4]
+    "title": "Название товара",
+    "category": "Категория",
+    "subcategory": "Подкатегория",
+    "color": "цвет",
+    "image_indexes": [номера_изображений]
   }}
 ]
 
-Где image_indexes - номера изображений (начиная с 0), которые показывают один товар.
-
-ВЕРНИТЕ ТОЛЬКО JSON, БЕЗ ДОПОЛНИТЕЛЬНОГО ТЕКСТА."""
+ВЕРНИТЕ ТОЛЬКО JSON БЕЗ ДОПОЛНИТЕЛЬНОГО ТЕКСТА."""
 
         logger.info("🚀 ОТПРАВЛЯЕМ BATCH ЗАПРОС В CLAUDE API...")
 
@@ -544,6 +537,148 @@ async def analyze_single_image(file: UploadFile = File(...)):
         }, status_code=500)
 
 
+@app.post("/api/analyze-individual")
+async def analyze_individual_images(files: List[UploadFile] = File(...)):
+    """ДИАГНОСТИЧЕСКИЙ эндпоинт: анализ каждого изображения отдельно"""
+    try:
+        logger.info(
+            f"🔍 ДИАГНОСТИКА: Получено {len(files)} файлов для индивидуального анализа")
+
+        # Собираем все валидные изображения
+        image_batch = []
+        file_info = []
+
+        logger.info(f"📋 Порядок получения файлов:")
+        for i, file in enumerate(files):
+            logger.info(f"  {i}: {file.filename} ({file.content_type})")
+
+        for file in files:
+            if not file.content_type or not file.content_type.startswith('image/'):
+                logger.warning(
+                    f"⚠️ Пропускаем {file.filename} - неверный тип: {file.content_type}")
+                continue
+
+            try:
+                contents = await file.read()
+                if len(contents) > 20 * 1024 * 1024:  # 20MB
+                    logger.warning(
+                        f"⚠️ Пропускаем {file.filename} - слишком большой: {len(contents)/1024/1024:.1f}MB")
+                    continue
+
+                image_batch.append((contents, file.filename))
+                file_info.append({
+                    'filename': file.filename,
+                    'content_type': file.content_type,
+                    'size': len(contents),
+                    'contents': contents
+                })
+
+            except Exception as file_error:
+                logger.error(
+                    f"❌ Ошибка чтения файла {file.filename}: {file_error}")
+                continue
+
+        if not image_batch:
+            raise HTTPException(
+                status_code=400, detail="Нет валидных изображений")
+
+        # Сохраняем отладочные файлы
+        session_id = f"{int(time.time())}_{len(image_batch)}"
+        debug_folder = save_debug_files(image_batch, session_id)
+
+        # Создаем промпт для индивидуального анализа
+        individual_descriptions = []
+
+        for i, (image_data, filename) in enumerate(image_batch):
+            logger.info(f"🔍 Анализируем изображение {i}: {filename}")
+
+            # Кодируем изображение в base64
+            image_base64 = base64.b64encode(image_data).decode('utf-8')
+
+            # Определяем MIME тип
+            mime_type = "image/jpeg"
+            if filename.lower().endswith('.png'):
+                mime_type = "image/png"
+            elif filename.lower().endswith('.webp'):
+                mime_type = "image/webp"
+
+            # Простой промпт для описания одного изображения
+            simple_prompt = f"""Опишите что изображено на этой фотографии одним предложением.
+
+Формат ответа:
+"Индекс {i}: [Название товара] - [краткое описание]"
+
+Например: "Индекс 0: Стиральная машина LG - белая стиральная машина с фронтальной загрузкой"
+
+ВЕРНИТЕ ТОЛЬКО ОДНО ПРЕДЛОЖЕНИЕ."""
+
+            try:
+                # Инициализация клиента
+                api_key = os.getenv("ANTHROPIC_API_KEY")
+                client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
+
+                # Отправляем запрос к Claude
+                message = client.messages.create(
+                    model="claude-3-5-sonnet-20241022",
+                    max_tokens=200,
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": mime_type,
+                                        "data": image_base64,
+                                    },
+                                },
+                                {
+                                    "type": "text",
+                                    "text": simple_prompt
+                                }
+                            ],
+                        }
+                    ],
+                )
+
+                description = message.content[0].text.strip()
+                individual_descriptions.append({
+                    "index": i,
+                    "filename": filename,
+                    "description": description
+                })
+
+                logger.info(f"✅ Индекс {i}: {description}")
+
+            except Exception as e:
+                error_desc = f"Ошибка анализа: {str(e)}"
+                individual_descriptions.append({
+                    "index": i,
+                    "filename": filename,
+                    "description": error_desc
+                })
+                logger.error(f"❌ Ошибка анализа изображения {i}: {e}")
+
+        return JSONResponse({
+            "success": True,
+            "diagnostic_mode": True,
+            "total_images": len(image_batch),
+            "descriptions": individual_descriptions,
+            "debug_folder": debug_folder,
+            "session_id": session_id,
+            "message": "Диагностический анализ завершен - каждое изображение описано отдельно"
+        })
+
+    except Exception as e:
+        logger.error(
+            f"❌ Ошибка диагностического анализа: {e}\n{traceback.format_exc()}")
+        return JSONResponse({
+            "success": False,
+            "error": f"Ошибка сервера: {str(e)}"
+        }, status_code=500)
+
+
 @app.post("/api/analyze-multiple")
 async def analyze_multiple_images(files: List[UploadFile] = File(...)):
     """Анализ нескольких изображений с группировкой по товарам"""
@@ -620,8 +755,9 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
 
                 # Формируем результаты по группам товаров
                 results = []
-                # Простая валидация индексов
+                # Умная валидация индексов с отслеживанием использованных
                 max_index = len(file_info) - 1
+                used_indexes = set()
                 logger.info(
                     f"🔧 Валидация индексов для {len(products)} товаров (максимальный индекс: {max_index})")
 
@@ -629,19 +765,24 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                     original_indexes = product.get('image_indexes', [])
                     valid_indexes = []
 
-                    # Простая проверка: берем только валидные индексы
+                    # Проверяем каждый индекс
                     for idx in original_indexes:
-                        if 0 <= idx <= max_index:
+                        if 0 <= idx <= max_index and idx not in used_indexes:
                             valid_indexes.append(idx)
+                            used_indexes.add(idx)
                         else:
                             logger.warning(
-                                f"⚠️ Пропускаем неверный индекс {idx} для товара '{product.get('title', 'Неизвестно')}'")
+                                f"⚠️ Пропускаем неверный/занятый индекс {idx} для товара '{product.get('title', 'Неизвестно')}'")
 
-                    # Если нет валидных индексов, берем первый доступный
+                    # Если нет валидных индексов, найдем первый свободный
                     if not valid_indexes and file_info:
-                        valid_indexes = [0]
-                        logger.info(
-                            f"✅ Fallback: назначен индекс 0 для товара '{product.get('title', 'Неизвестно')}'")
+                        for idx in range(max_index + 1):
+                            if idx not in used_indexes:
+                                valid_indexes = [idx]
+                                used_indexes.add(idx)
+                                logger.info(
+                                    f"✅ Fallback: назначен свободный индекс {idx} для товара '{product.get('title', 'Неизвестно')}'")
+                                break
 
                     product['image_indexes'] = valid_indexes
                     product['original_indexes'] = original_indexes
@@ -849,6 +990,25 @@ async def get_categories():
             "error": str(e),
             "categories": {}
         }, status_code=500)
+
+
+@app.get("/diagnostic", response_class=HTMLResponse)
+async def diagnostic_page():
+    """Диагностическая страница для анализа отдельных изображений"""
+    try:
+        return FileResponse('static/diagnostic.html')
+    except Exception as e:
+        logger.error(f"Ошибка загрузки диагностической страницы: {e}")
+        return HTMLResponse("""
+        <!DOCTYPE html>
+        <html>
+        <head><title>Диагностика</title></head>
+        <body>
+            <h1>🔍 Диагностика изображений</h1>
+            <p>Страница недоступна. Используйте API: POST /api/analyze-individual</p>
+        </body>
+        </html>
+        """, status_code=500)
 
 
 @app.get("/debug", response_class=HTMLResponse)

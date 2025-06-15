@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ru">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🔍 Диагностика изображений</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .upload-area {
+            border: 2px dashed #ccc;
+            padding: 40px;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .upload-area.dragover {
+            border-color: #007bff;
+            background-color: #f8f9fa;
+        }
+
+        .result {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+
+        .result h3 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+
+        .result p {
+            margin: 5px 0;
+        }
+
+        .loading {
+            text-align: center;
+            color: #666;
+        }
+
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #0056b3;
+        }
+
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .error {
+            color: red;
+            background: #ffe6e6;
+            padding: 10px;
+            border-radius: 5px;
+        }
+
+        .success {
+            color: green;
+            background: #e6ffe6;
+            padding: 10px;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>🔍 Диагностика изображений</h1>
+    <p>Этот инструмент анализирует каждое изображение отдельно, чтобы проверить правильность индексов и описаний.</p>
+
+    <div class="upload-area" id="uploadArea">
+        <p>📁 Перетащите изображения сюда или нажмите для выбора</p>
+        <input type="file" id="fileInput" multiple accept="image/*" style="display: none;">
+        <button onclick="document.getElementById('fileInput').click()">Выбрать файлы</button>
+    </div>
+
+    <div id="results"></div>
+
+    <script>
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const results = document.getElementById('results');
+
+        // Drag & Drop
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = Array.from(e.dataTransfer.files).filter(file => file.type.startsWith('image/'));
+            if (files.length > 0) {
+                analyzeImages(files);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            const files = Array.from(e.target.files);
+            if (files.length > 0) {
+                analyzeImages(files);
+            }
+        });
+
+        async function analyzeImages(files) {
+            results.innerHTML = '<div class="loading">🔄 Анализируем изображения...</div>';
+
+            const formData = new FormData();
+            files.forEach(file => {
+                formData.append('files', file);
+            });
+
+            try {
+                const response = await fetch('/api/analyze-individual', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    displayResults(data);
+                } else {
+                    results.innerHTML = `<div class="error">❌ Ошибка: ${data.error}</div>`;
+                }
+            } catch (error) {
+                results.innerHTML = `<div class="error">❌ Ошибка сети: ${error.message}</div>`;
+            }
+        }
+
+        function displayResults(data) {
+            let html = `<div class="success">✅ ${data.message}</div>`;
+            html += `<p><strong>Всего изображений:</strong> ${data.total_images}</p>`;
+            html += `<p><strong>Session ID:</strong> ${data.session_id}</p>`;
+
+            data.descriptions.forEach(item => {
+                html += `
+                    <div class="result">
+                        <h3>Индекс ${item.index}</h3>
+                        <p><strong>Файл:</strong> ${item.filename}</p>
+                        <p><strong>Описание:</strong> ${item.description}</p>
+                    </div>
+                `;
+            });
+
+            results.innerHTML = html;
+        }
+    </script>
+</body>
+
+</html>
