@@ -901,7 +901,32 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                 logger.error("❌ ПУСТОЙ JSON ПОСЛЕ ИЗВЛЕЧЕНИЯ ИЗ MARKDOWN!")
                 raise ValueError("Не удалось извлечь JSON из ответа Claude")
 
-            products = json.loads(response_text)
+            # ДЕТАЛЬНАЯ ДИАГНОСТИКА ПЕРЕД ПАРСИНГОМ JSON
+            logger.info(f"🔍 ДИАГНОСТИЧЕСКАЯ ФИНАЛЬНАЯ ДИАГНОСТИКА JSON:")
+            logger.info(f"  📏 Длина: {len(response_text)}")
+            logger.info(f"  🔤 Первые 10 символов: {repr(response_text[:10])}")
+            logger.info(
+                f"  🔤 Последние 10 символов: {repr(response_text[-10:])}")
+            logger.info(f"  ✂️ После strip(): {len(response_text.strip())}")
+            logger.info(
+                f"  🎯 Начинается с '[': {response_text.strip().startswith('[')}")
+            logger.info(
+                f"  🎯 Заканчивается на ']': {response_text.strip().endswith(']')}")
+
+            # Попытка парсинга с детальной диагностикой
+            try:
+                products = json.loads(response_text)
+                logger.info(
+                    f"✅ ДИАГНОСТИКА: JSON успешно распарсен! Тип: {type(products)}, длина: {len(products) if isinstance(products, list) else 'не список'}")
+            except json.JSONDecodeError as json_error:
+                logger.error(
+                    f"❌ ДИАГНОСТИКА: ОШИБКА JSON ПАРСИНГА: {json_error}")
+                logger.error(
+                    f"🔍 Позиция ошибки: строка {json_error.lineno}, колонка {json_error.colno}")
+                logger.error(
+                    f"🔍 Проблемный фрагмент: {repr(response_text[max(0, json_error.pos-20):json_error.pos+20])}")
+                raise
+
             if not isinstance(products, list):
                 raise ValueError("Ответ Claude не является списком")
 
@@ -1444,7 +1469,31 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                 logger.error("❌ ПУСТОЙ JSON ПОСЛЕ ИЗВЛЕЧЕНИЯ ИЗ MARKDOWN!")
                 raise ValueError("Не удалось извлечь JSON из ответа Claude")
 
-            products = json.loads(response_text)
+            # ДЕТАЛЬНАЯ ДИАГНОСТИКА ПЕРЕД ПАРСИНГОМ JSON
+            logger.info(f"🔍 ФИНАЛЬНАЯ ДИАГНОСТИКА JSON:")
+            logger.info(f"  📏 Длина: {len(response_text)}")
+            logger.info(f"  🔤 Первые 10 символов: {repr(response_text[:10])}")
+            logger.info(
+                f"  🔤 Последние 10 символов: {repr(response_text[-10:])}")
+            logger.info(f"  ✂️ После strip(): {len(response_text.strip())}")
+            logger.info(
+                f"  🎯 Начинается с '[': {response_text.strip().startswith('[')}")
+            logger.info(
+                f"  🎯 Заканчивается на ']': {response_text.strip().endswith(']')}")
+
+            # Попытка парсинга с детальной диагностикой
+            try:
+                products = json.loads(response_text)
+                logger.info(
+                    f"✅ JSON успешно распарсен! Тип: {type(products)}, длина: {len(products) if isinstance(products, list) else 'не список'}")
+            except json.JSONDecodeError as json_error:
+                logger.error(f"❌ ОШИБКА JSON ПАРСИНГА: {json_error}")
+                logger.error(
+                    f"🔍 Позиция ошибки: строка {json_error.lineno}, колонка {json_error.colno}")
+                logger.error(
+                    f"🔍 Проблемный фрагмент: {repr(response_text[max(0, json_error.pos-20):json_error.pos+20])}")
+                raise
+
             if not isinstance(products, list):
                 raise ValueError("Ответ Claude не является списком")
 
