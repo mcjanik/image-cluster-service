@@ -22,24 +22,52 @@ const PhotoListingApp = () => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('upload');
   const [showInstructions, setShowInstructions] = useState(true);
-
-  const categories = {
-    'Недвижимость': ['Квартиры', 'Дома', 'Дачи', 'Коммерческая недвижимость', 'Земельные участки', 'Гаражи'],
-    'Транспорт': ['Легковые автомобили', 'Грузовики', 'Мотоциклы', 'Автозапчасти', 'Шины и диски'],
-    'Электроника и бытовая техника': ['Телефоны и связь', 'Компьютеры и оргтехника', 'Телевизоры', 'Аудиотехника', 'Фото и видео'],
-    'Одежда и личные вещи': ['Мужская одежда', 'Женская одежда', 'Детская одежда', 'Обувь', 'Аксессуары'],
-    'Все для дома': ['Мебель', 'Бытовая техника', 'Посуда', 'Текстиль', 'Инструменты'],
-    'Детский мир': ['Детская одежда', 'Детская обувь', 'Детская мебель', 'Детские автокресла', 'Детские коляски', 'Игрушки'],
-    'Строительство, сырье и ремонт': ['Стройматериалы', 'Инструменты', 'Сантехника', 'Электрика'],
-    'Работа': ['Вакансии', 'Резюме', 'Услуги']
-  };
+  const [categories, setCategories] = useState({});
+  const [categoriesLoaded, setCategoriesLoaded] = useState(false);
 
   const conditions = ['Новое', 'Отличное', 'Хорошее', 'Удовлетворительное', 'На запчасти'];
   const currencies = ['сомони', 'доллар', 'евро'];
 
 
 
+  // Функция для загрузки категорий с сервера
+  const loadCategories = async () => {
+    try {
+      const response = await fetch('/api/categories');
+      const data = await response.json();
+
+      if (data.success) {
+        setCategories(data.categories);
+        setCategoriesLoaded(true);
+        console.log('Категории загружены:', data.categories);
+      } else {
+        console.error('Ошибка загрузки категорий:', data.error);
+        // Fallback к базовым категориям
+        setCategories({
+          'Одежда и личные вещи': ['Мужская одежда', 'Женская одежда', 'Обувь'],
+          'Электроника и бытовая техника': ['Телефоны и связь', 'Компьютеры и оргтехника'],
+          'Детский мир': ['Детская одежда', 'Игрушки'],
+          'Все для дома': ['Мебель', 'Бытовая техника']
+        });
+        setCategoriesLoaded(true);
+      }
+    } catch (error) {
+      console.error('Ошибка при загрузке категорий:', error);
+      // Fallback к базовым категориям
+      setCategories({
+        'Одежда и личные вещи': ['Мужская одежда', 'Женская одежда', 'Обувь'],
+        'Электроника и бытовая техника': ['Телефоны и связь', 'Компьютеры и оргтехника'],
+        'Детский мир': ['Детская одежда', 'Игрушки'],
+        'Все для дома': ['Мебель', 'Бытовая техника']
+      });
+      setCategoriesLoaded(true);
+    }
+  };
+
   useEffect(() => {
+    // Загружаем категории при старте
+    loadCategories();
+
     // Загружаем результаты из localStorage
     const savedResults = localStorage.getItem('ai_tovar_results');
     if (savedResults) {
@@ -123,25 +151,28 @@ const PhotoListingApp = () => {
 
       if (data.success) {
         // Обрабатываем результаты
-        const processedResults = data.results.map(result => ({
-          id: result.id,
-          images: [result.image_preview],
-          title: extractTitle(result.description),
-          description: result.description,
-          mainCategory: detectCategory(result.description),
-          subCategory: detectSubCategory(result.description),
-          price: extractPrice(result.description),
-          currency: 'сомони',
-          brand: extractBrand(result.description),
-          condition: extractCondition(result.description),
-          location: 'Душанбе',
-          userInput: userDescription,
+        const processedResults = data.results.map(result => {
+          const mainCategory = detectCategory(result.description);
+          return {
+            id: result.id,
+            images: [result.image_preview],
+            title: extractTitle(result.description),
+            description: result.description,
+            mainCategory: mainCategory,
+            subCategory: detectSubCategory(result.description, mainCategory),
+            price: extractPrice(result.description),
+            currency: 'сомони',
+            brand: extractBrand(result.description),
+            condition: extractCondition(result.description),
+            location: 'Душанбе',
+            userInput: userDescription,
 
-          filename: result.filename,
-          width: result.width,
-          height: result.height,
-          size_bytes: result.size_bytes
-        }));
+            filename: result.filename,
+            width: result.width,
+            height: result.height,
+            size_bytes: result.size_bytes
+          };
+        });
 
         setResults(processedResults);
 
@@ -177,29 +208,69 @@ const PhotoListingApp = () => {
 
   const detectCategory = (description) => {
     const categoryKeywords = {
-      'Одежда и личные вещи': ['кроссовки', 'обувь', 'одежда', 'футболка', 'джинсы', 'платье'],
-      'Электроника и бытовая техника': ['ноутбук', 'телефон', 'компьютер', 'телевизор', 'техника'],
-      'Детский мир': ['детск', 'автокресло', 'коляска', 'игрушка'],
-      'Транспорт': ['автомобиль', 'машина', 'мотоцикл', 'запчасти'],
-      'Все для дома': ['мебель', 'стол', 'стул', 'диван', 'кровать']
+      'Одежда и личные вещи': ['кроссовки', 'обувь', 'одежда', 'футболка', 'джинсы', 'платье', 'рубашка', 'брюки', 'юбка', 'куртка'],
+      'Электроника и бытовая техника': ['ноутбук', 'телефон', 'компьютер', 'телевизор', 'техника', 'планшет', 'наушники'],
+      'Телефоны и связь': ['телефон', 'смартфон', 'айфон', 'samsung', 'xiaomi', 'huawei', 'мобильный'],
+      'Компьютеры и оргтехника': ['ноутбук', 'компьютер', 'монитор', 'клавиатура', 'мышь', 'принтер'],
+      'Детский мир': ['детск', 'автокресло', 'коляска', 'игрушка', 'памперс', 'соска', 'детская одежда'],
+      'Все для дома': ['мебель', 'стол', 'стул', 'диван', 'кровать', 'шкаф', 'посуда', 'кастрюля'],
+      'Животные и растения': ['собака', 'кошка', 'щенок', 'котенок', 'корм', 'растение', 'цветок'],
+      'Хобби, музыка и спорт': ['гитара', 'пианино', 'спорт', 'велосипед', 'книга', 'футбол', 'теннис']
     };
 
     const lowerDesc = description.toLowerCase();
+
+    // Сначала проверяем по ключевым словам
     for (let [category, keywords] of Object.entries(categoryKeywords)) {
       if (keywords.some(keyword => lowerDesc.includes(keyword))) {
-        return category;
+        // Проверяем, есть ли эта категория в загруженных категориях
+        if (categories[category]) {
+          return category;
+        }
       }
     }
-    return 'Все для дома';
+
+    // Если не нашли по ключевым словам, возвращаем первую доступную категорию
+    const availableCategories = Object.keys(categories);
+    return availableCategories.length > 0 ? availableCategories[0] : 'Все для дома';
   };
 
-  const detectSubCategory = (description) => {
+  const detectSubCategory = (description, mainCategory) => {
     const lowerDesc = description.toLowerCase();
-    if (lowerDesc.includes('кроссовки') || lowerDesc.includes('обувь')) return 'Обувь';
-    if (lowerDesc.includes('ноутбук') || lowerDesc.includes('компьютер')) return 'Компьютеры и оргтехника';
-    if (lowerDesc.includes('детск')) return 'Детские товары';
-    if (lowerDesc.includes('автокресло')) return 'Детские автокресла';
-    return 'Другое';
+
+    // Если основная категория определена, ищем подкатегорию в ней
+    if (mainCategory && categories[mainCategory]) {
+      const subcategories = categories[mainCategory];
+
+      // Ключевые слова для подкатегорий
+      const subcategoryKeywords = {
+        'Мобильные телефоны': ['телефон', 'смартфон', 'айфон', 'samsung', 'xiaomi'],
+        'Аксессуары для телефонов': ['чехол', 'защитное стекло', 'зарядка', 'наушники'],
+        'Ноутбуки': ['ноутбук', 'лэптоп'],
+        'Персональные компьютеры': ['компьютер', 'системный блок', 'пк'],
+        'Мужская одежда': ['мужск', 'рубашка', 'брюки', 'костюм'],
+        'Женская одежда': ['женск', 'платье', 'юбка', 'блузка'],
+        'Обувь': ['кроссовки', 'ботинки', 'туфли', 'сапоги', 'обувь'],
+        'Детская одежда': ['детск', 'детская одежда'],
+        'Игрушки': ['игрушка', 'кукла', 'машинка', 'конструктор'],
+        'Мебель': ['стол', 'стул', 'диван', 'кровать', 'шкаф']
+      };
+
+      // Ищем подходящую подкатегорию
+      for (let subcategory of subcategories) {
+        if (subcategoryKeywords[subcategory]) {
+          const keywords = subcategoryKeywords[subcategory];
+          if (keywords.some(keyword => lowerDesc.includes(keyword))) {
+            return subcategory;
+          }
+        }
+      }
+
+      // Если не нашли по ключевым словам, возвращаем первую подкатегорию
+      return subcategories.length > 0 ? subcategories[0] : '';
+    }
+
+    return '';
   };
 
   const extractPrice = (description) => {

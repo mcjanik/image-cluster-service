@@ -199,8 +199,8 @@ const PhotoListingApp = () => {
           <div className="bg-white rounded-lg border p-4 mb-6">
             <div
               className={`relative border-2 border-dashed rounded-lg p-6 transition-all ${dragActive
-                  ? 'border-orange-500 bg-orange-50'
-                  : 'border-gray-300'
+                ? 'border-orange-500 bg-orange-50'
+                : 'border-gray-300'
                 }`}
               onDragEnter={handleDrag}
               onDragLeave={handleDrag}
@@ -655,16 +655,16 @@ const PromotionCard = ({ item, onUpdate }) => {
             <div
               key={option.type}
               className={`border rounded-lg p-3 cursor-pointer transition-all ${isSelected
-                  ? 'border-orange-500 bg-orange-50'
-                  : 'border-gray-200'
+                ? 'border-orange-500 bg-orange-50'
+                : 'border-gray-200'
                 }`}
               onClick={() => handlePromotionChange(option.type, option.type === 'standard' ? 0 : days)}
             >
               <div className="flex items-center justify-between">
                 <div className="flex items-center">
                   <IconComponent className={`w-4 h-4 mr-2 ${option.type === 'standard' ? 'text-gray-500' :
-                      option.type === 'top' ? 'text-yellow-500' :
-                        'text-purple-500'
+                    option.type === 'top' ? 'text-yellow-500' :
+                      'text-purple-500'
                     }`} />
                   <div>
                     <span className="font-medium text-sm">{option.name}</span>
