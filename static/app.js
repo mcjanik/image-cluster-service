@@ -489,8 +489,8 @@ const PhotoListingApp = () => {
         console.log('📦 Обрабатываем групповой ответ с', data.results.length, 'товарами');
 
         newResults = data.results.map(product => {
-          // Извлекаем превью изображений из массива images
-          const imageUrls = product.images ? product.images.map(img => img.image_preview) : [];
+          // Используем массив images напрямую, так как он уже содержит готовые URL
+          const imageUrls = product.images || [];
           const mainImage = imageUrls.length > 0 ? imageUrls[0] : '';
 
           return {
