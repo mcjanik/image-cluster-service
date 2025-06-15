@@ -1242,22 +1242,23 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
 
                     description = "\n".join(description_parts)
 
-                results.append({
-                    "id": f"product_{product_idx}_{int(time.time())}",
-                    "filename": f"grouped_product_{product_idx}",
-                    "width": 800,
-                    "height": 600,
-                    "size_bytes": sum(file_info[i]['size'] for i in valid_indexes if i < len(file_info)),
-                    "images": product_images,
-                    "image_preview": product_images[0] if product_images else "",
-                    "description": description,
-                    "title": title,
-                    "category": category,
-                    "subcategory": subcategory,
-                    "color": color,
-                    "image_indexes": valid_indexes
-                })
+                    results.append({
+                        "id": f"product_{product_idx}_{int(time.time())}",
+                        "filename": f"grouped_product_{product_idx}",
+                        "width": 800,
+                        "height": 600,
+                        "size_bytes": sum(file_info[i]['size'] for i in valid_indexes if i < len(file_info)),
+                        "images": product_images,
+                        "image_preview": product_images[0] if product_images else "",
+                        "description": description,
+                        "title": title,
+                        "category": category,
+                        "subcategory": subcategory,
+                        "color": color,
+                        "image_indexes": valid_indexes
+                    })
 
+                # ИСПРАВЛЕНИЕ: Перенесли логирование и return ПОСЛЕ цикла for
                 logger.info(f"✅ Сформировано {len(results)} товарных групп")
 
                 return JSONResponse({
