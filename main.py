@@ -180,7 +180,7 @@ SOMON_CATEGORIES = """Телефоны и связь
 -- Готовый бизнес в аренду"""
 
 
-def resize_image_for_claude(image_data: bytes, max_size: int = 2000) -> bytes:
+def resize_image_for_claude(image_data: bytes, max_size: int = 2000) -> tuple[bytes, str]:
     """Изменяет размер изображения для соответствия ограничениям Claude API"""
     try:
         # Открываем изображение
@@ -194,7 +194,13 @@ def resize_image_for_claude(image_data: bytes, max_size: int = 2000) -> bytes:
         if width <= max_size and height <= max_size:
             logger.info(
                 f"✅ Размер изображения в пределах нормы ({max_size}px)")
-            return image_data
+            # Определяем MIME тип исходного изображения
+            original_mime = "image/jpeg"
+            if image.format == 'PNG':
+                original_mime = "image/png"
+            elif image.format == 'WEBP':
+                original_mime = "image/webp"
+            return image_data, original_mime
 
         # Вычисляем новые размеры с сохранением пропорций
         if width > height:
@@ -214,11 +220,14 @@ def resize_image_for_claude(image_data: bytes, max_size: int = 2000) -> bytes:
         output = io.BytesIO()
 
         # Определяем формат для сохранения
+        output_mime = "image/jpeg"  # По умолчанию
         if image.format in ['JPEG', 'JPG']:
             resized_image.save(output, format='JPEG',
                                quality=85, optimize=True)
+            output_mime = "image/jpeg"
         elif image.format == 'PNG':
             resized_image.save(output, format='PNG', optimize=True)
+            output_mime = "image/png"
         else:
             # По умолчанию сохраняем как JPEG
             if resized_image.mode in ('RGBA', 'LA', 'P'):
@@ -232,19 +241,21 @@ def resize_image_for_claude(image_data: bytes, max_size: int = 2000) -> bytes:
                 resized_image = rgb_image
             resized_image.save(output, format='JPEG',
                                quality=85, optimize=True)
+            output_mime = "image/jpeg"
 
         resized_data = output.getvalue()
         logger.info(
             f"✅ Размер изменен: {len(image_data)} → {len(resized_data)} байт ({len(resized_data)/len(image_data)*100:.1f}%)")
+        logger.info(f"📎 Выходной MIME тип: {output_mime}")
 
-        return resized_data
+        return resized_data, output_mime
 
     except ImportError:
         logger.warning("⚠️ PIL не установлен, пропускаем изменение размера")
-        return image_data
+        return image_data, "image/jpeg"
     except Exception as e:
         logger.error(f"❌ Ошибка изменения размера изображения: {e}")
-        return image_data
+        return image_data, "image/jpeg"
 
 
 def save_debug_files(files_data: List[tuple], session_id: str) -> str:
@@ -495,18 +506,11 @@ def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> st
             logger.info(f"🖼️ Диагностика изображения {i}: {filename}")
 
             # Изменяем размер изображения для соответствия ограничениям Claude
-            resized_image_data = resize_image_for_claude(
+            resized_image_data, mime_type = resize_image_for_claude(
                 image_data, max_size=2000)
 
             # Кодируем изображение в base64
             base64_image = base64.b64encode(resized_image_data).decode('utf-8')
-
-            # Определяем MIME тип
-            mime_type = "image/jpeg"
-            if filename.lower().endswith('.png'):
-                mime_type = "image/png"
-            elif filename.lower().endswith('.webp'):
-                mime_type = "image/webp"
 
             image_contents.append({
                 "type": "image",
@@ -541,15 +545,21 @@ def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> st
 Формат ответа - ТОЛЬКО JSON:
 [
   {{
+    "group_id": "group_1",
     "title": "Название товара",
     "category": "Категория", 
     "subcategory": "Подкатегория",
     "color": "цвет",
-    "image_indexes": [номера_изображений]
+    "image_indexes": [номера_изображений],
+    "reasoning": "Объяснение почему эти изображения сгруппированы вместе",
+    "description": "Описание товара"
   }}
 ]
 
-ВАЖНО: Используйте только индексы от 0 до {len(image_batch)-1}
+ВАЖНО: 
+- Используйте только индексы от 0 до {len(image_batch)-1}
+- Каждый индекс должен использоваться РОВНО ОДИН РАЗ
+- Объясните свои решения в поле "reasoning"!
 
 ВЕРНИТЕ ТОЛЬКО JSON БЕЗ ДОПОЛНИТЕЛЬНОГО ТЕКСТА."""
 
@@ -726,15 +736,14 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
         # Подготавливаем изображения для batch запроса
         image_contents = []
         for i, (image_data, filename) in enumerate(image_batch):
-            # Кодируем изображение в base64
-            base64_image = base64.b64encode(image_data).decode('utf-8')
+            logger.info(f"🖼️ Диагностика изображения {i}: {filename}")
 
-            # Определяем MIME тип
-            mime_type = "image/jpeg"
-            if filename.lower().endswith('.png'):
-                mime_type = "image/png"
-            elif filename.lower().endswith('.webp'):
-                mime_type = "image/webp"
+            # Изменяем размер изображения для соответствия ограничениям Claude
+            resized_image_data, mime_type = resize_image_for_claude(
+                image_data, max_size=2000)
+
+            # Кодируем изображение в base64
+            base64_image = base64.b64encode(resized_image_data).decode('utf-8')
 
             image_contents.append({
                 "type": "image",
@@ -999,15 +1008,12 @@ async def analyze_individual_images(files: List[UploadFile] = File(...)):
         for i, (image_data, filename) in enumerate(image_batch):
             logger.info(f"🔍 Анализируем изображение {i}: {filename}")
 
-            # Кодируем изображение в base64
-            image_base64 = base64.b64encode(image_data).decode('utf-8')
+            # Изменяем размер изображения для соответствия ограничениям Claude
+            resized_image_data, mime_type = resize_image_for_claude(
+                image_data, max_size=2000)
 
-            # Определяем MIME тип
-            mime_type = "image/jpeg"
-            if filename.lower().endswith('.png'):
-                mime_type = "image/png"
-            elif filename.lower().endswith('.webp'):
-                mime_type = "image/webp"
+            # Кодируем изображение в base64
+            image_base64 = base64.b64encode(resized_image_data).decode('utf-8')
 
             # Простой промпт для описания одного изображения
             simple_prompt = f"""Опишите что изображено на этой фотографии одним предложением.
@@ -1175,6 +1181,47 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                 products = json.loads(json_str)
                 logger.info(
                     f"✅ Найдено {len(products)} сгруппированных товаров")
+
+                # Дополнительная валидация индексов (как в диагностике)
+                max_valid_index = len(image_batch) - 1
+                logger.info(
+                    f"🔧 Валидация индексов: максимальный допустимый индекс = {max_valid_index}")
+
+                # Собираем все использованные индексы
+                all_used_indexes = []
+                for product in products:
+                    original_indexes = product.get('image_indexes', [])
+                    valid_indexes = []
+
+                    for idx in original_indexes:
+                        if isinstance(idx, int) and 0 <= idx <= max_valid_index:
+                            valid_indexes.append(idx)
+                            all_used_indexes.append(idx)
+                        else:
+                            logger.warning(
+                                f"⚠️ Товар {product.get('title', '?')}: неверный индекс {idx}, максимальный = {max_valid_index}")
+
+                    product['image_indexes'] = valid_indexes
+                    if original_indexes != valid_indexes:
+                        logger.info(
+                            f"✅ Товар {product.get('title', '?')}: исправлены индексы {original_indexes} → {valid_indexes}")
+
+                # Проверяем на пропущенные и дублированные индексы
+                expected_indexes = set(range(len(image_batch)))
+                used_indexes = set(all_used_indexes)
+                missing_indexes = expected_indexes - used_indexes
+                duplicate_indexes = [
+                    idx for idx in all_used_indexes if all_used_indexes.count(idx) > 1]
+
+                if missing_indexes:
+                    logger.warning(
+                        f"⚠️ Пропущенные индексы: {sorted(missing_indexes)}")
+                if duplicate_indexes:
+                    logger.warning(
+                        f"⚠️ Дублированные индексы: {sorted(set(duplicate_indexes))}")
+
+                logger.info(
+                    f"📊 Статистика индексов: использовано {len(used_indexes)}/{len(expected_indexes)}")
 
                 # Формируем результаты по группам товаров
                 results = []
