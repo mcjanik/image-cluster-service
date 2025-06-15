@@ -406,14 +406,17 @@ def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> st
                 }
             })
 
-        # Максимально четкий промпт
-        batch_prompt = f"""Проанализируйте изображения и определите РАЗНЫЕ товары. Каждый уникальный предмет = отдельный товар.
+        # Используем тот же промпт что работает в диагностике
+        batch_prompt = f"""Проанализируйте эти {len(image_batch)} изображений и сгруппируйте ОДИНАКОВЫЕ товары.
+
+ЗАДАЧА: Найти изображения которые показывают ОДИН И ТОТ ЖЕ товар с разных ракурсов.
 
 ПРАВИЛА:
-1. Внимательно смотрите на каждое изображение
+1. Внимательно сравните каждое изображение
 2. Разные типы техники = разные товары (кондиционер ≠ плита ≠ стиральная машина)
-3. Группируйте только ОДИНАКОВЫЕ предметы с разных ракурсов
-4. При малейшем сомнении - разделяйте на отдельные товары
+3. Группируйте только ИДЕНТИЧНЫЕ предметы (одна и та же стиральная машина, один и тот же кондиционер)
+4. Разные модели/цвета/размеры = разные товары
+5. При малейшем сомнении - лучше разделить на отдельные товары
 
 ВАЖНО: НЕ объединяйте разные устройства в один товар!
 
@@ -423,7 +426,7 @@ def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> st
 [
   {{
     "title": "Название товара",
-    "category": "Категория",
+    "category": "Категория", 
     "subcategory": "Подкатегория",
     "color": "цвет",
     "image_indexes": [номера_изображений]
@@ -585,6 +588,13 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
         session_id = f"diag_{int(time.time())}_{len(image_batch)}"
         debug_folder = save_debug_files(image_batch, session_id)
 
+        logger.info(f"🔍 ДЕТАЛЬНАЯ ДИАГНОСТИКА:")
+        logger.info(f"  📁 Всего файлов получено: {len(files)}")
+        logger.info(f"  ✅ Валидных изображений: {len(image_batch)}")
+        logger.info(f"  📋 Порядок валидных файлов:")
+        for i, (_, filename) in enumerate(image_batch):
+            logger.info(f"    Индекс {i}: {filename}")
+
         # Подготавливаем изображения для batch запроса
         image_contents = []
         for i, (image_data, filename) in enumerate(image_batch):
@@ -683,7 +693,7 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                     "raw_response": response_text,
                     "debug_folder": debug_folder,
                     "session_id": session_id,
-                    "file_order": [{"index": i, "filename": info['filename']} for i, info in enumerate(file_info)],
+                    "file_order": [{"index": i, "filename": filename} for i, (_, filename) in enumerate(image_batch)],
                     "image_urls": [f"/debug-files/{session_id}/{i:02d}_{filename}" for i, (_, filename) in enumerate(image_batch)],
                     "message": "Диагностика группировки завершена"
                 })
@@ -920,8 +930,6 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
         # Парсим результаты группировки из Claude
         try:
             # Пытаемся извлечь JSON из ответа Claude
-
-            # Ищем JSON в ответе
             json_start = claude_response.find('[')
             json_end = claude_response.rfind(']') + 1
 
@@ -933,37 +941,7 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
 
                 # Формируем результаты по группам товаров
                 results = []
-                # Умная валидация индексов с отслеживанием использованных
                 max_index = len(file_info) - 1
-                used_indexes = set()
-                logger.info(
-                    f"🔧 Валидация индексов для {len(products)} товаров (максимальный индекс: {max_index})")
-
-                for product in products:
-                    original_indexes = product.get('image_indexes', [])
-                    valid_indexes = []
-
-                    # Проверяем каждый индекс
-                    for idx in original_indexes:
-                        if 0 <= idx <= max_index and idx not in used_indexes:
-                            valid_indexes.append(idx)
-                            used_indexes.add(idx)
-                        else:
-                            logger.warning(
-                                f"⚠️ Пропускаем неверный/занятый индекс {idx} для товара '{product.get('title', 'Неизвестно')}'")
-
-                    # Если нет валидных индексов, найдем первый свободный
-                    if not valid_indexes and file_info:
-                        for idx in range(max_index + 1):
-                            if idx not in used_indexes:
-                                valid_indexes = [idx]
-                                used_indexes.add(idx)
-                                logger.info(
-                                    f"✅ Fallback: назначен свободный индекс {idx} для товара '{product.get('title', 'Неизвестно')}'")
-                                break
-
-                    product['image_indexes'] = valid_indexes
-                    product['original_indexes'] = original_indexes
 
                 for product_idx, product in enumerate(products):
                     title = product.get('title', f'Товар {product_idx + 1}')
@@ -971,39 +949,48 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                     subcategory = product.get('subcategory', '')
                     color = product.get('color', '')
                     image_indexes = product.get('image_indexes', [])
-                    original_indexes = product.get('original_indexes', [])
 
                     logger.info(
-                        f"🔍 Обрабатываем товар {product_idx}: '{title}' с индексами {image_indexes} (оригинальные: {original_indexes})")
+                        f"🔍 Обрабатываем товар {product_idx}: '{title}' с индексами {image_indexes}")
+
+                    # Простая валидация индексов - только проверяем что они в допустимом диапазоне
+                    valid_indexes = []
+                    for idx in image_indexes:
+                        if 0 <= idx <= max_index:
+                            valid_indexes.append(idx)
+                        else:
+                            logger.warning(
+                                f"⚠️ Пропускаем неверный индекс {idx} для товара '{title}' (максимальный индекс: {max_index})")
+
+                    # Если нет валидных индексов, используем первый доступный
+                    if not valid_indexes and file_info:
+                        valid_indexes = [0]
+                        logger.info(
+                            f"✅ Fallback: назначен индекс 0 для товара '{title}'")
 
                     # Собираем изображения для этого товара
                     product_images = []
-                    valid_indexes = []
-                    image_filenames = []  # Для отладки
+                    image_filenames = []
 
-                    # Индексы уже проверены и исправлены, просто обрабатываем их
-                    for img_idx in image_indexes:
-                        info = file_info[img_idx]
-                        image_base64 = base64.b64encode(
-                            info['contents']).decode('utf-8')
-                        product_images.append(
-                            f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
-                        valid_indexes.append(img_idx)
-                        image_filenames.append(info['filename'])
-                        logger.info(
-                            f"  ✅ Добавлено изображение {img_idx}: {info['filename']}")
-
-                    if not product_images:  # Если нет изображений, берем первое доступное
-                        logger.warning(
-                            f"⚠️ Товар '{title}' не имеет валидных изображений, используем fallback")
-                        if file_info:
-                            info = file_info[0]
+                    for img_idx in valid_indexes:
+                        if img_idx < len(file_info):
+                            info = file_info[img_idx]
                             image_base64 = base64.b64encode(
                                 info['contents']).decode('utf-8')
                             product_images.append(
                                 f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
-                            valid_indexes = [0]
-                            image_filenames = [info['filename']]
+                            image_filenames.append(info['filename'])
+                            logger.info(
+                                f"  ✅ Добавлено изображение {img_idx}: {info['filename']}")
+
+                    if not product_images and file_info:  # Fallback если нет изображений
+                        info = file_info[0]
+                        image_base64 = base64.b64encode(
+                            info['contents']).decode('utf-8')
+                        product_images.append(
+                            f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
+                        valid_indexes = [0]
+                        image_filenames = [info['filename']]
 
                     logger.info(
                         f"  📸 Итого изображений для '{title}': {len(product_images)} ({image_filenames})")
@@ -1019,21 +1006,19 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                     description = "\n".join(description_parts)
 
                     results.append({
-                        "id": f"product_{product_idx}_{int(time())}",
+                        "id": f"product_{product_idx}_{int(time.time())}",
                         "filename": f"grouped_product_{product_idx}",
                         "width": 800,
                         "height": 600,
-                        "size_bytes": sum(file_info[i]['size'] for i in valid_indexes),
-                        "images": product_images,  # Массив изображений для товара
-                        # Первое изображение для совместимости
+                        "size_bytes": sum(file_info[i]['size'] for i in valid_indexes if i < len(file_info)),
+                        "images": product_images,
                         "image_preview": product_images[0] if product_images else "",
                         "description": description,
                         "title": title,
                         "category": category,
                         "subcategory": subcategory,
                         "color": color,
-                        "image_indexes": valid_indexes,  # Используем только валидные индексы
-                        "original_indexes": image_indexes  # Сохраняем оригинальные для отладки
+                        "image_indexes": valid_indexes
                     })
 
                 logger.info(f"✅ Сформировано {len(results)} товарных групп")
@@ -1056,6 +1041,7 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
         except (json.JSONDecodeError, ValueError) as e:
             logger.warning(
                 f"⚠️ Не удалось распарсить группировку: {e}, используем fallback")
+            logger.info(f"🔍 Сырой ответ Claude: {claude_response[:500]}...")
 
         # Fallback - возвращаем как отдельные изображения
         results = []
