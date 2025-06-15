@@ -507,6 +507,10 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
         image_batch = []
         file_info = []  # Сохраняем информацию о файлах в том же порядке
 
+        logger.info(f"📋 Порядок получения файлов:")
+        for i, file in enumerate(files):
+            logger.info(f"  {i}: {file.filename} ({file.content_type})")
+
         for file in files:
             if not file.content_type or not file.content_type.startswith('image/'):
                 logger.warning(
@@ -563,9 +567,14 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                     subcategory = product.get('subcategory', '')
                     image_indexes = product.get('image_indexes', [])
 
+                    logger.info(
+                        f"🔍 Обрабатываем товар {product_idx}: '{title}' с индексами {image_indexes}")
+
                     # Собираем изображения для этого товара
                     product_images = []
                     valid_indexes = []
+                    image_filenames = []  # Для отладки
+
                     for img_idx in image_indexes:
                         if 0 <= img_idx < len(file_info):
                             info = file_info[img_idx]
@@ -574,6 +583,9 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                             product_images.append(
                                 f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
                             valid_indexes.append(img_idx)
+                            image_filenames.append(info['filename'])
+                            logger.info(
+                                f"  ✅ Добавлено изображение {img_idx}: {info['filename']}")
                         else:
                             logger.warning(
                                 f"⚠️ Неверный индекс изображения: {img_idx} (максимум {len(file_info)-1}) для товара '{title}'")
@@ -588,6 +600,10 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                             product_images.append(
                                 f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
                             valid_indexes = [0]
+                            image_filenames = [info['filename']]
+
+                    logger.info(
+                        f"  📸 Итого изображений для '{title}': {len(product_images)} ({image_filenames})")
 
                     # Создаем описание товара
                     description = f"""🏷️ ТОВАР: {title}
