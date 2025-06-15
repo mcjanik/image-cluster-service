@@ -1113,7 +1113,6 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
             detail=f"Слишком много файлов: {len(files)}. Максимум 50 файлов за раз. Пожалуйста, разделите файлы на несколько групп.")
 
     try:
-
         # Собираем все валидные изображения
         image_batch = []
         file_info = []
@@ -1154,12 +1153,11 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                     f"❌ Ошибка чтения файла {file.filename}: {file_error}")
                 continue
 
-    # Проверяем что есть валидные изображения (вне try блока для правильного HTTP статуса)
-    if not image_batch:
-        raise HTTPException(
-            status_code=400, detail="Нет валидных изображений для обработки")
+        # Проверяем что есть валидные изображения (вне try блока для правильного HTTP статуса)
+        if not image_batch:
+            raise HTTPException(
+                status_code=400, detail="Нет валидных изображений для обработки")
 
-    try:
         # Сохраняем отладочные файлы
         session_id = f"main_{int(time.time())}_{len(image_batch)}"
         debug_folder = save_debug_files(image_batch, session_id)
