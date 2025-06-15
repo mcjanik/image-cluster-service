@@ -219,17 +219,17 @@ def resize_image_for_claude(image_data: bytes, max_size: int = 2000) -> tuple[by
         # Сохраняем в байты
         output = io.BytesIO()
 
-        # Определяем формат для сохранения
+        # Определяем формат для сохранения с улучшенным сжатием
         output_mime = "image/jpeg"  # По умолчанию
         if image.format in ['JPEG', 'JPG']:
             resized_image.save(output, format='JPEG',
-                               quality=85, optimize=True)
+                               quality=75, optimize=True)  # Уменьшили quality для меньшего размера
             output_mime = "image/jpeg"
         elif image.format == 'PNG':
             resized_image.save(output, format='PNG', optimize=True)
             output_mime = "image/png"
         else:
-            # По умолчанию сохраняем как JPEG
+            # Для WebP и других форматов сохраняем как JPEG с хорошим сжатием
             if resized_image.mode in ('RGBA', 'LA', 'P'):
                 # Конвертируем в RGB для JPEG
                 rgb_image = Image.new(
@@ -240,13 +240,19 @@ def resize_image_for_claude(image_data: bytes, max_size: int = 2000) -> tuple[by
                 )[-1] if resized_image.mode in ('RGBA', 'LA') else None)
                 resized_image = rgb_image
             resized_image.save(output, format='JPEG',
-                               quality=85, optimize=True)
+                               quality=75, optimize=True)  # Уменьшили quality
             output_mime = "image/jpeg"
 
         resized_data = output.getvalue()
+        size_change = len(resized_data)/len(image_data)*100
         logger.info(
-            f"✅ Размер изменен: {len(image_data)} → {len(resized_data)} байт ({len(resized_data)/len(image_data)*100:.1f}%)")
-        logger.info(f"📎 Выходной MIME тип: {output_mime}")
+            f"✅ Размер изменен: {len(image_data)} → {len(resized_data)} байт ({size_change:.1f}%)")
+        logger.info(f"📎 Формат: {image.format} → {output_mime}")
+
+        # Предупреждение если размер сильно увеличился
+        if size_change > 150:
+            logger.warning(
+                f"⚠️ Размер файла увеличился на {size_change-100:.1f}% из-за конвертации {image.format} → JPEG")
 
         return resized_data, output_mime
 
@@ -1225,26 +1231,20 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
 
                 # Формируем результаты по группам товаров
                 results = []
-                max_index = len(file_info) - 1
 
                 for product_idx, product in enumerate(products):
                     title = product.get('title', f'Товар {product_idx + 1}')
                     category = product.get('category', 'Разное')
                     subcategory = product.get('subcategory', '')
                     color = product.get('color', '')
-                    image_indexes = product.get('image_indexes', [])
+                    image_indexes = product.get(
+                        'image_indexes', [])  # Уже валидированы выше
 
                     logger.info(
                         f"🔍 Обрабатываем товар {product_idx}: '{title}' с индексами {image_indexes}")
 
-                    # Простая валидация индексов - только проверяем что они в допустимом диапазоне
-                    valid_indexes = []
-                    for idx in image_indexes:
-                        if 0 <= idx <= max_index:
-                            valid_indexes.append(idx)
-                        else:
-                            logger.warning(
-                                f"⚠️ Пропускаем неверный индекс {idx} для товара '{title}' (максимальный индекс: {max_index})")
+                    # Используем уже валидированные индексы без повторной проверки
+                    valid_indexes = image_indexes
 
                     # Если нет валидных индексов, используем первый доступный
                     if not valid_indexes and file_info:
