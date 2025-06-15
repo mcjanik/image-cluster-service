@@ -537,6 +537,182 @@ async def analyze_single_image(file: UploadFile = File(...)):
         }, status_code=500)
 
 
+@app.post("/api/analyze-grouping")
+async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
+    """ДИАГНОСТИКА ГРУППИРОВКИ: показывает как Claude группирует изображения"""
+    try:
+        logger.info(f"🔍 ДИАГНОСТИКА ГРУППИРОВКИ: Получено {len(files)} файлов")
+
+        # Собираем все валидные изображения
+        image_batch = []
+        file_info = []
+
+        logger.info(f"📋 Порядок получения файлов:")
+        for i, file in enumerate(files):
+            logger.info(f"  {i}: {file.filename} ({file.content_type})")
+
+        for file in files:
+            if not file.content_type or not file.content_type.startswith('image/'):
+                logger.warning(
+                    f"⚠️ Пропускаем {file.filename} - неверный тип: {file.content_type}")
+                continue
+
+            try:
+                contents = await file.read()
+                if len(contents) > 20 * 1024 * 1024:  # 20MB
+                    logger.warning(
+                        f"⚠️ Пропускаем {file.filename} - слишком большой: {len(contents)/1024/1024:.1f}MB")
+                    continue
+
+                image_batch.append((contents, file.filename))
+                file_info.append({
+                    'filename': file.filename,
+                    'content_type': file.content_type,
+                    'size': len(contents),
+                    'contents': contents
+                })
+
+            except Exception as file_error:
+                logger.error(
+                    f"❌ Ошибка чтения файла {file.filename}: {file_error}")
+                continue
+
+        if not image_batch:
+            raise HTTPException(
+                status_code=400, detail="Нет валидных изображений")
+
+        # Сохраняем отладочные файлы
+        session_id = f"diag_{int(time.time())}_{len(image_batch)}"
+        debug_folder = save_debug_files(image_batch, session_id)
+
+        # Подготавливаем изображения для batch запроса
+        image_contents = []
+        for i, (image_data, filename) in enumerate(image_batch):
+            # Кодируем изображение в base64
+            base64_image = base64.b64encode(image_data).decode('utf-8')
+
+            # Определяем MIME тип
+            mime_type = "image/jpeg"
+            if filename.lower().endswith('.png'):
+                mime_type = "image/png"
+            elif filename.lower().endswith('.webp'):
+                mime_type = "image/webp"
+
+            image_contents.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime_type,
+                    "data": base64_image
+                }
+            })
+
+        # ДИАГНОСТИЧЕСКИЙ промпт для группировки
+        diagnostic_prompt = f"""ДИАГНОСТИКА ГРУППИРОВКИ: Проанализируйте эти {len(image_batch)} изображений и сгруппируйте ОДИНАКОВЫЕ товары.
+
+ЗАДАЧА: Найти изображения которые показывают ОДИН И ТОТ ЖЕ товар с разных ракурсов.
+
+ПРАВИЛА:
+1. Внимательно сравните каждое изображение
+2. Группируйте только ИДЕНТИЧНЫЕ предметы (одна и та же стиральная машина, один и тот же кондиционер)
+3. Разные модели/цвета/размеры = разные товары
+4. Если сомневаетесь - лучше разделить
+
+ФОРМАТ ОТВЕТА - детальный JSON с объяснениями:
+[
+  {{
+    "group_id": 1,
+    "title": "Название товара",
+    "reasoning": "Почему эти изображения сгруппированы вместе",
+    "image_indexes": [0, 3],
+    "description": "Детальное описание товара"
+  }},
+  {{
+    "group_id": 2,
+    "title": "Другой товар",
+    "reasoning": "Почему это отдельный товар",
+    "image_indexes": [1],
+    "description": "Описание второго товара"
+  }}
+]
+
+ВАЖНО: Объясните свои решения в поле "reasoning"!
+
+ВЕРНИТЕ ТОЛЬКО JSON БЕЗ ДОПОЛНИТЕЛЬНОГО ТЕКСТА."""
+
+        try:
+            # Инициализация клиента
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
+
+            logger.info("🚀 ОТПРАВЛЯЕМ ДИАГНОСТИЧЕСКИЙ ЗАПРОС В CLAUDE API...")
+
+            # Отправляем batch запрос к Claude
+            message = client.messages.create(
+                model="claude-3-5-sonnet-20241022",
+                max_tokens=8192,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            *image_contents,
+                            {
+                                "type": "text",
+                                "text": diagnostic_prompt
+                            }
+                        ],
+                    }
+                ],
+            )
+
+            response_text = message.content[0].text
+            logger.info(
+                f"✅ ПОЛУЧЕН ДИАГНОСТИЧЕСКИЙ ОТВЕТ! Длина: {len(response_text)} символов")
+            logger.info(f"🔍 ПОЛНЫЙ ОТВЕТ: {response_text}")
+
+            # Пытаемся распарсить JSON
+            try:
+                import json
+                groups = json.loads(response_text)
+
+                return JSONResponse({
+                    "success": True,
+                    "diagnostic_mode": "grouping",
+                    "total_images": len(image_batch),
+                    "groups": groups,
+                    "raw_response": response_text,
+                    "debug_folder": debug_folder,
+                    "session_id": session_id,
+                    "file_order": [{"index": i, "filename": info['filename']} for i, info in enumerate(file_info)],
+                    "message": "Диагностика группировки завершена"
+                })
+
+            except json.JSONDecodeError as e:
+                logger.error(f"❌ Ошибка парсинга JSON: {e}")
+                return JSONResponse({
+                    "success": False,
+                    "error": f"Ошибка парсинга JSON: {e}",
+                    "raw_response": response_text,
+                    "debug_folder": debug_folder,
+                    "session_id": session_id
+                })
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка запроса к Claude: {e}")
+            return JSONResponse({
+                "success": False,
+                "error": f"Ошибка Claude API: {str(e)}"
+            }, status_code=500)
+
+    except Exception as e:
+        logger.error(
+            f"❌ Ошибка диагностики группировки: {e}\n{traceback.format_exc()}")
+        return JSONResponse({
+            "success": False,
+            "error": f"Ошибка сервера: {str(e)}"
+        }, status_code=500)
+
+
 @app.post("/api/analyze-individual")
 async def analyze_individual_images(files: List[UploadFile] = File(...)):
     """ДИАГНОСТИЧЕСКИЙ эндпоинт: анализ каждого изображения отдельно"""

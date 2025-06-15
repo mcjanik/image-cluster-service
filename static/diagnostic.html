@@ -88,6 +88,18 @@
         <p>📁 Перетащите изображения сюда или нажмите для выбора</p>
         <input type="file" id="fileInput" multiple accept="image/*" style="display: none;">
         <button onclick="document.getElementById('fileInput').click()">Выбрать файлы</button>
+
+        <div style="margin-top: 20px;">
+            <button id="analyzeIndividual"
+                onclick="analyzeMode = 'individual'; document.getElementById('fileInput').click()"
+                style="margin-right: 10px;">
+                🔍 Анализ отдельных изображений
+            </button>
+            <button id="analyzeGrouping"
+                onclick="analyzeMode = 'grouping'; document.getElementById('fileInput').click()">
+                🔗 Диагностика группировки
+            </button>
+        </div>
     </div>
 
     <div id="results"></div>
@@ -96,6 +108,7 @@
         const uploadArea = document.getElementById('uploadArea');
         const fileInput = document.getElementById('fileInput');
         const results = document.getElementById('results');
+        let analyzeMode = 'individual'; // По умолчанию
 
         // Drag & Drop
         uploadArea.addEventListener('dragover', (e) => {
@@ -124,15 +137,18 @@
         });
 
         async function analyzeImages(files) {
-            results.innerHTML = '<div class="loading">🔄 Анализируем изображения...</div>';
+            const modeText = analyzeMode === 'individual' ? 'отдельные изображения' : 'группировку товаров';
+            results.innerHTML = `<div class="loading">🔄 Анализируем ${modeText}...</div>`;
 
             const formData = new FormData();
             files.forEach(file => {
                 formData.append('files', file);
             });
 
+            const endpoint = analyzeMode === 'individual' ? '/api/analyze-individual' : '/api/analyze-grouping';
+
             try {
-                const response = await fetch('/api/analyze-individual', {
+                const response = await fetch(endpoint, {
                     method: 'POST',
                     body: formData
                 });
@@ -140,16 +156,23 @@
                 const data = await response.json();
 
                 if (data.success) {
-                    displayResults(data);
+                    if (analyzeMode === 'individual') {
+                        displayIndividualResults(data);
+                    } else {
+                        displayGroupingResults(data);
+                    }
                 } else {
                     results.innerHTML = `<div class="error">❌ Ошибка: ${data.error}</div>`;
+                    if (data.raw_response) {
+                        results.innerHTML += `<details><summary>Сырой ответ Claude</summary><pre>${data.raw_response}</pre></details>`;
+                    }
                 }
             } catch (error) {
                 results.innerHTML = `<div class="error">❌ Ошибка сети: ${error.message}</div>`;
             }
         }
 
-        function displayResults(data) {
+        function displayIndividualResults(data) {
             let html = `<div class="success">✅ ${data.message}</div>`;
             html += `<p><strong>Всего изображений:</strong> ${data.total_images}</p>`;
             html += `<p><strong>Session ID:</strong> ${data.session_id}</p>`;
@@ -163,6 +186,36 @@
                     </div>
                 `;
             });
+
+            results.innerHTML = html;
+        }
+
+        function displayGroupingResults(data) {
+            let html = `<div class="success">✅ ${data.message}</div>`;
+            html += `<p><strong>Всего изображений:</strong> ${data.total_images}</p>`;
+            html += `<p><strong>Session ID:</strong> ${data.session_id}</p>`;
+
+            // Показываем порядок файлов
+            html += `<div class="result"><h3>📋 Порядок файлов</h3>`;
+            data.file_order.forEach(file => {
+                html += `<p><strong>Индекс ${file.index}:</strong> ${file.filename}</p>`;
+            });
+            html += `</div>`;
+
+            // Показываем группы
+            data.groups.forEach(group => {
+                html += `
+                    <div class="result">
+                        <h3>🔗 Группа ${group.group_id}: ${group.title}</h3>
+                        <p><strong>Изображения:</strong> ${group.image_indexes.join(', ')}</p>
+                        <p><strong>Обоснование:</strong> ${group.reasoning}</p>
+                        <p><strong>Описание:</strong> ${group.description}</p>
+                    </div>
+                `;
+            });
+
+            // Показываем сырой ответ для отладки
+            html += `<details><summary>🔍 Сырой ответ Claude</summary><pre>${data.raw_response}</pre></details>`;
 
             results.innerHTML = html;
         }
