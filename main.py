@@ -14,21 +14,11 @@ import logging.handlers
 import time
 from datetime import datetime
 
-# Создаем папку для логов
-os.makedirs("logs", exist_ok=True)
-
-# Настраиваем логирование в файл и консоль
+# Временная настройка логирования (будет обновлена после определения STORAGE_BASE)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(),  # Вывод в консоль
-        logging.handlers.RotatingFileHandler(
-            'logs/app.log',
-            maxBytes=10*1024*1024,  # 10MB
-            backupCount=5
-        )
-    ]
+    handlers=[logging.StreamHandler()]  # Пока только консоль
 )
 logger = logging.getLogger(__name__)
 
@@ -44,10 +34,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Определяем базовую папку для хранения (используем примонтированный диск Render)
+STORAGE_BASE = "/var/data" if os.path.exists("/var/data") else "."
+
 # Создаем папки
 os.makedirs("static", exist_ok=True)
-os.makedirs("uploads", exist_ok=True)
-os.makedirs("debug_images", exist_ok=True)
+os.makedirs(os.path.join(STORAGE_BASE, "uploads"), exist_ok=True)
+os.makedirs(os.path.join(STORAGE_BASE, "debug_images"), exist_ok=True)
+os.makedirs(os.path.join(STORAGE_BASE, "logs"), exist_ok=True)
+
+logger.info(f"📁 Базовая папка для хранения: {STORAGE_BASE}")
+logger.info(
+    f"💾 Постоянный диск {'ПОДКЛЮЧЕН' if STORAGE_BASE != '.' else 'НЕ НАЙДЕН'}")
+
+# Настраиваем логирование в файл после определения STORAGE_BASE
+log_file_path = os.path.join(STORAGE_BASE, "logs", "app.log")
+file_handler = logging.handlers.RotatingFileHandler(
+    log_file_path,
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5
+)
+file_handler.setFormatter(logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(file_handler)
+logger.info(f"📝 Логи сохраняются в: {log_file_path}")
 
 # Подключаем статические файлы
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -172,7 +182,7 @@ def save_debug_files(files_data: List[tuple], session_id: str) -> str:
     """Сохраняет файлы для отладки и возвращает путь к папке"""
     try:
         # Создаем папку для этой сессии
-        session_folder = f"debug_images/{session_id}"
+        session_folder = os.path.join(STORAGE_BASE, "debug_images", session_id)
         os.makedirs(session_folder, exist_ok=True)
 
         # Сохраняем каждый файл с индексом
@@ -767,11 +777,23 @@ async def health_check():
     except Exception as e:
         claude_status = f"error: {str(e)}"
 
+    # Проверяем статус диска
+    disk_status = {
+        "persistent_disk_mounted": STORAGE_BASE != ".",
+        "storage_path": STORAGE_BASE,
+        "folders": {
+            "debug_images": os.path.exists(os.path.join(STORAGE_BASE, "debug_images")),
+            "logs": os.path.exists(os.path.join(STORAGE_BASE, "logs")),
+            "uploads": os.path.exists(os.path.join(STORAGE_BASE, "uploads"))
+        }
+    }
+
     return JSONResponse({
         "status": "healthy",
         "api_key_configured": bool(api_key),
         "api_key_preview": f"{api_key[:10]}...{api_key[-4:]}" if api_key else None,
         "claude_status": claude_status,
+        "disk_status": disk_status,
         "message": "🚀 Somon.tj API работает!"
     })
 
@@ -847,7 +869,7 @@ async def debug_page():
 async def get_logs(lines: int = 100):
     """Получить последние строки логов"""
     try:
-        log_file = "logs/app.log"
+        log_file = os.path.join(STORAGE_BASE, "logs", "app.log")
         if not os.path.exists(log_file):
             return JSONResponse({
                 "success": False,
@@ -979,7 +1001,7 @@ async def logs_page():
 async def get_debug_files(session_id: str):
     """Получить список отладочных файлов для сессии"""
     try:
-        debug_folder = f"debug_images/{session_id}"
+        debug_folder = os.path.join(STORAGE_BASE, "debug_images", session_id)
         if not os.path.exists(debug_folder):
             raise HTTPException(status_code=404, detail="Сессия не найдена")
 
@@ -1021,7 +1043,8 @@ async def get_debug_files(session_id: str):
 async def get_debug_file(session_id: str, filename: str):
     """Получить конкретный отладочный файл"""
     try:
-        file_path = f"debug_images/{session_id}/{filename}"
+        file_path = os.path.join(
+            STORAGE_BASE, "debug_images", session_id, filename)
         if not os.path.exists(file_path):
             raise HTTPException(status_code=404, detail="Файл не найден")
 
@@ -1030,6 +1053,185 @@ async def get_debug_file(session_id: str, filename: str):
     except Exception as e:
         logger.error(f"Ошибка получения файла: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/file-structure")
+async def get_file_structure():
+    """Получить структуру файлов проекта"""
+    try:
+        def scan_directory(path, max_depth=3, current_depth=0):
+            items = []
+            if current_depth >= max_depth:
+                return items
+
+            try:
+                for item in sorted(os.listdir(path)):
+                    if item.startswith('.'):
+                        continue
+
+                    item_path = os.path.join(path, item)
+                    if os.path.isdir(item_path):
+                        items.append({
+                            "name": item,
+                            "type": "directory",
+                            "path": item_path,
+                            "children": scan_directory(item_path, max_depth, current_depth + 1)
+                        })
+                    else:
+                        try:
+                            size = os.path.getsize(item_path)
+                            items.append({
+                                "name": item,
+                                "type": "file",
+                                "path": item_path,
+                                "size": size
+                            })
+                        except:
+                            items.append({
+                                "name": item,
+                                "type": "file",
+                                "path": item_path,
+                                "size": 0
+                            })
+            except PermissionError:
+                pass
+
+            return items
+
+        # Сканируем текущую директорию
+        current_dir = os.getcwd()
+        structure = {
+            "current_directory": current_dir,
+            "structure": scan_directory(current_dir),
+            "disk_usage": {}
+        }
+
+        # Добавляем информацию о дисковом пространстве
+        try:
+            import shutil
+            total, used, free = shutil.disk_usage(current_dir)
+            structure["disk_usage"] = {
+                "total_gb": round(total / (1024**3), 2),
+                "used_gb": round(used / (1024**3), 2),
+                "free_gb": round(free / (1024**3), 2)
+            }
+        except:
+            pass
+
+        return JSONResponse({
+            "success": True,
+            "data": structure
+        })
+
+    except Exception as e:
+        logger.error(f"Ошибка получения структуры файлов: {e}")
+        return JSONResponse({
+            "success": False,
+            "error": str(e)
+        }, status_code=500)
+
+
+@app.get("/file-browser", response_class=HTMLResponse)
+async def file_browser():
+    """Веб-браузер файлов"""
+    return HTMLResponse("""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Файловый браузер - Somon.tj</title>
+        <meta charset="utf-8">
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; background: #f5f5f5; }
+            .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; }
+            .file-tree { margin: 20px 0; }
+            .file-item { margin: 5px 0; padding: 8px; border-radius: 4px; cursor: pointer; }
+            .file-item:hover { background: #f0f0f0; }
+            .directory { font-weight: bold; color: #2196F3; }
+            .file { color: #666; }
+            .file-size { color: #999; font-size: 0.9em; margin-left: 10px; }
+            .indent-1 { margin-left: 20px; }
+            .indent-2 { margin-left: 40px; }
+            .indent-3 { margin-left: 60px; }
+            .disk-info { background: #e3f2fd; padding: 15px; border-radius: 4px; margin-bottom: 20px; }
+            .refresh-btn { background: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; }
+            .refresh-btn:hover { background: #45a049; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>📁 Файловый браузер Somon.tj</h1>
+            <button class="refresh-btn" onclick="loadFileStructure()">🔄 Обновить</button>
+            
+            <div id="diskInfo" class="disk-info">Загрузка информации о диске...</div>
+            <div id="fileTree" class="file-tree">Загрузка структуры файлов...</div>
+        </div>
+        
+        <script>
+            function formatBytes(bytes) {
+                if (bytes === 0) return '0 B';
+                const k = 1024;
+                const sizes = ['B', 'KB', 'MB', 'GB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+            
+            function renderFileTree(items, depth = 0) {
+                let html = '';
+                for (const item of items) {
+                    const indentClass = `indent-${Math.min(depth, 3)}`;
+                    if (item.type === 'directory') {
+                        html += `<div class="file-item directory ${indentClass}">📁 ${item.name}/</div>`;
+                        if (item.children && item.children.length > 0) {
+                            html += renderFileTree(item.children, depth + 1);
+                        }
+                    } else {
+                        const size = item.size ? formatBytes(item.size) : '';
+                        html += `<div class="file-item file ${indentClass}">📄 ${item.name}<span class="file-size">${size}</span></div>`;
+                    }
+                }
+                return html;
+            }
+            
+            async function loadFileStructure() {
+                try {
+                    const response = await fetch('/api/file-structure');
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        const structure = data.data;
+                        
+                        // Обновляем информацию о диске
+                        const diskInfo = document.getElementById('diskInfo');
+                        if (structure.disk_usage && structure.disk_usage.total_gb) {
+                            diskInfo.innerHTML = `
+                                <strong>💾 Дисковое пространство:</strong><br>
+                                📊 Всего: ${structure.disk_usage.total_gb} GB<br>
+                                📈 Использовано: ${structure.disk_usage.used_gb} GB<br>
+                                📉 Свободно: ${structure.disk_usage.free_gb} GB<br>
+                                📍 Текущая папка: ${structure.current_directory}
+                            `;
+                        } else {
+                            diskInfo.innerHTML = `📍 Текущая папка: ${structure.current_directory}`;
+                        }
+                        
+                        // Обновляем дерево файлов
+                        const fileTree = document.getElementById('fileTree');
+                        fileTree.innerHTML = renderFileTree(structure.structure);
+                        
+                    } else {
+                        document.getElementById('fileTree').innerHTML = `<p>Ошибка: ${data.error}</p>`;
+                    }
+                } catch (error) {
+                    document.getElementById('fileTree').innerHTML = `<p>Ошибка загрузки: ${error.message}</p>`;
+                }
+            }
+            
+            // Загружаем при старте
+            loadFileStructure();
+        </script>
+    </body>
+    </html>
+    """)
 
 
 if __name__ == "__main__":
