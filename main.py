@@ -13,6 +13,8 @@ import logging
 import logging.handlers
 import time
 from datetime import datetime
+import io
+from PIL import Image
 
 # Временная настройка логирования (будет обновлена после определения STORAGE_BASE)
 logging.basicConfig(
@@ -176,6 +178,73 @@ SOMON_CATEGORIES = """Телефоны и связь
 -- Оборудование
 -- Сырьё и материалы для бизнеса
 -- Готовый бизнес в аренду"""
+
+
+def resize_image_for_claude(image_data: bytes, max_size: int = 2000) -> bytes:
+    """Изменяет размер изображения для соответствия ограничениям Claude API"""
+    try:
+        # Открываем изображение
+        image = Image.open(io.BytesIO(image_data))
+
+        # Получаем текущие размеры
+        width, height = image.size
+        logger.info(f"📐 Исходный размер изображения: {width}x{height}")
+
+        # Проверяем нужно ли изменять размер
+        if width <= max_size and height <= max_size:
+            logger.info(
+                f"✅ Размер изображения в пределах нормы ({max_size}px)")
+            return image_data
+
+        # Вычисляем новые размеры с сохранением пропорций
+        if width > height:
+            new_width = max_size
+            new_height = int((height * max_size) / width)
+        else:
+            new_height = max_size
+            new_width = int((width * max_size) / height)
+
+        logger.info(f"🔄 Изменяем размер до: {new_width}x{new_height}")
+
+        # Изменяем размер
+        resized_image = image.resize(
+            (new_width, new_height), Image.Resampling.LANCZOS)
+
+        # Сохраняем в байты
+        output = io.BytesIO()
+
+        # Определяем формат для сохранения
+        if image.format in ['JPEG', 'JPG']:
+            resized_image.save(output, format='JPEG',
+                               quality=85, optimize=True)
+        elif image.format == 'PNG':
+            resized_image.save(output, format='PNG', optimize=True)
+        else:
+            # По умолчанию сохраняем как JPEG
+            if resized_image.mode in ('RGBA', 'LA', 'P'):
+                # Конвертируем в RGB для JPEG
+                rgb_image = Image.new(
+                    'RGB', resized_image.size, (255, 255, 255))
+                if resized_image.mode == 'P':
+                    resized_image = resized_image.convert('RGBA')
+                rgb_image.paste(resized_image, mask=resized_image.split(
+                )[-1] if resized_image.mode in ('RGBA', 'LA') else None)
+                resized_image = rgb_image
+            resized_image.save(output, format='JPEG',
+                               quality=85, optimize=True)
+
+        resized_data = output.getvalue()
+        logger.info(
+            f"✅ Размер изменен: {len(image_data)} → {len(resized_data)} байт ({len(resized_data)/len(image_data)*100:.1f}%)")
+
+        return resized_data
+
+    except ImportError:
+        logger.warning("⚠️ PIL не установлен, пропускаем изменение размера")
+        return image_data
+    except Exception as e:
+        logger.error(f"❌ Ошибка изменения размера изображения: {e}")
+        return image_data
 
 
 def save_debug_files(files_data: List[tuple], session_id: str) -> str:
@@ -423,8 +492,14 @@ def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> st
         # Подготавливаем изображения для batch запроса
         image_contents = []
         for i, (image_data, filename) in enumerate(image_batch):
+            logger.info(f"🖼️ Диагностика изображения {i}: {filename}")
+
+            # Изменяем размер изображения для соответствия ограничениям Claude
+            resized_image_data = resize_image_for_claude(
+                image_data, max_size=2000)
+
             # Кодируем изображение в base64
-            base64_image = base64.b64encode(image_data).decode('utf-8')
+            base64_image = base64.b64encode(resized_image_data).decode('utf-8')
 
             # Определяем MIME тип
             mime_type = "image/jpeg"
@@ -644,7 +719,9 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
         logger.info(f"  ✅ Валидных изображений: {len(image_batch)}")
         logger.info(f"  📋 Порядок валидных файлов:")
         for i, (_, filename) in enumerate(image_batch):
-            logger.info(f"    Индекс {i}: {filename}")
+            saved_filename = f"{i:02d}.webp"
+            logger.info(
+                f"    Индекс {i}: {saved_filename} (оригинал: {filename})")
 
         # Подготавливаем изображения для batch запроса
         image_contents = []
