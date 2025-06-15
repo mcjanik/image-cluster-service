@@ -794,7 +794,11 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                 raise ValueError(
                     "API ключ Anthropic не настроен в переменных окружения")
 
-            client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
+            client = anthropic.Anthropic(
+                api_key=api_key,
+                timeout=120.0,  # Увеличиваем таймаут до 2 минут
+                max_retries=2   # Ограничиваем количество повторных попыток
+            )
             logger.info(f"✅ API ключ найден: {api_key[:15]}...{api_key[-4:]}")
 
             logger.info("🚀 ОТПРАВЛЯЕМ ДИАГНОСТИЧЕСКИЙ ЗАПРОС В CLAUDE API...")
@@ -848,9 +852,23 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                         }
                     ],
                 )
+            except anthropic.APITimeoutError as timeout_error:
+                logger.error(f"❌ ТАЙМАУТ CLAUDE API: {timeout_error}")
+                raise ValueError(
+                    f"Таймаут Claude API (попробуйте позже): {str(timeout_error)}")
+            except anthropic.RateLimitError as rate_error:
+                logger.error(
+                    f"❌ ПРЕВЫШЕН ЛИМИТ ЗАПРОСОВ CLAUDE API: {rate_error}")
+                raise ValueError(
+                    f"Превышен лимит запросов Claude API: {str(rate_error)}")
+            except anthropic.APIError as api_error:
+                logger.error(f"❌ ОШИБКА CLAUDE API: {api_error}")
+                raise ValueError(f"Ошибка Claude API: {str(api_error)}")
             except Exception as api_error:
-                logger.error(f"❌ ОШИБКА ВЫЗОВА CLAUDE API: {api_error}")
-                raise ValueError(f"Ошибка вызова Claude API: {str(api_error)}")
+                logger.error(
+                    f"❌ НЕИЗВЕСТНАЯ ОШИБКА ВЫЗОВА CLAUDE API: {api_error}")
+                raise ValueError(
+                    f"Неизвестная ошибка вызова Claude API: {str(api_error)}")
 
             # Проверяем что ответ содержит контент
             if not message.content or len(message.content) == 0:
@@ -866,6 +884,14 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
             if not response_text or not response_text.strip():
                 logger.error("❌ ПУСТОЙ ОТВЕТ ОТ CLAUDE!")
                 raise ValueError("Claude вернул пустой ответ")
+
+            # Проверяем что ответ не является HTML (ошибка сети)
+            if response_text.strip().startswith('<'):
+                logger.error(
+                    "❌ ДИАГНОСТИКА: ПОЛУЧЕН HTML ВМЕСТО JSON! Возможно ошибка сети или перегрузка API")
+                logger.error(f"🔍 HTML ответ: {response_text[:500]}...")
+                raise ValueError(
+                    "Claude вернул HTML вместо JSON (ошибка сети или перегрузка API)")
 
             # Парсим JSON ответ - ИСПРАВЛЕННАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ ИЗ MARKDOWN
             if response_text.strip().startswith('```'):
@@ -1362,7 +1388,11 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                 raise ValueError(
                     "API ключ Anthropic не настроен в переменных окружения")
 
-            client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
+            client = anthropic.Anthropic(
+                api_key=api_key,
+                timeout=120.0,  # Увеличиваем таймаут до 2 минут
+                max_retries=2   # Ограничиваем количество повторных попыток
+            )
             logger.info(f"✅ API ключ найден: {api_key[:15]}...{api_key[-4:]}")
 
             logger.info("🚀 ОТПРАВЛЯЕМ ОСНОВНОЙ ЗАПРОС В CLAUDE API...")
@@ -1416,9 +1446,23 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                         }
                     ],
                 )
+            except anthropic.APITimeoutError as timeout_error:
+                logger.error(f"❌ ТАЙМАУТ CLAUDE API: {timeout_error}")
+                raise ValueError(
+                    f"Таймаут Claude API (попробуйте позже): {str(timeout_error)}")
+            except anthropic.RateLimitError as rate_error:
+                logger.error(
+                    f"❌ ПРЕВЫШЕН ЛИМИТ ЗАПРОСОВ CLAUDE API: {rate_error}")
+                raise ValueError(
+                    f"Превышен лимит запросов Claude API: {str(rate_error)}")
+            except anthropic.APIError as api_error:
+                logger.error(f"❌ ОШИБКА CLAUDE API: {api_error}")
+                raise ValueError(f"Ошибка Claude API: {str(api_error)}")
             except Exception as api_error:
-                logger.error(f"❌ ОШИБКА ВЫЗОВА CLAUDE API: {api_error}")
-                raise ValueError(f"Ошибка вызова Claude API: {str(api_error)}")
+                logger.error(
+                    f"❌ НЕИЗВЕСТНАЯ ОШИБКА ВЫЗОВА CLAUDE API: {api_error}")
+                raise ValueError(
+                    f"Неизвестная ошибка вызова Claude API: {str(api_error)}")
 
             # Проверяем что ответ содержит контент
             if not message.content or len(message.content) == 0:
@@ -1434,6 +1478,14 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
             if not response_text or not response_text.strip():
                 logger.error("❌ ПУСТОЙ ОТВЕТ ОТ CLAUDE!")
                 raise ValueError("Claude вернул пустой ответ")
+
+            # Проверяем что ответ не является HTML (ошибка сети)
+            if response_text.strip().startswith('<'):
+                logger.error(
+                    "❌ ПОЛУЧЕН HTML ВМЕСТО JSON! Возможно ошибка сети или перегрузка API")
+                logger.error(f"🔍 HTML ответ: {response_text[:500]}...")
+                raise ValueError(
+                    "Claude вернул HTML вместо JSON (ошибка сети или перегрузка API)")
 
             # Парсим JSON ответ - ИСПРАВЛЕННАЯ ЛОГИКА ИЗВЛЕЧЕНИЯ ИЗ MARKDOWN
             if response_text.strip().startswith('```'):
