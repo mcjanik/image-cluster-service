@@ -1114,12 +1114,15 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
 
         # Собираем все валидные изображения
         image_batch = []
-        file_info = []  # Сохраняем информацию о файлах в том же порядке
+        file_info = []
 
         logger.info(f"📋 Порядок получения файлов:")
         for i, file in enumerate(files):
             logger.info(f"  {i}: {file.filename} ({file.content_type})")
 
+        # ИСПРАВЛЕНИЕ: НЕ сортируем файлы, сохраняем исходный порядок от пользователя
+        # Проблема была в том что сортировка ломала соответствие индексов!
+        logger.info(f"📋 Сохраняем исходный порядок файлов (БЕЗ сортировки):")
         for i, file in enumerate(files):
             logger.info(f"  {i}: {file.filename} ({file.content_type})")
 
@@ -1131,7 +1134,6 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
 
             try:
                 contents = await file.read()
-
                 if len(contents) > 20 * 1024 * 1024:  # 20MB
                     logger.warning(
                         f"⚠️ Пропускаем {file.filename} - слишком большой: {len(contents)/1024/1024:.1f}MB")
@@ -1142,7 +1144,7 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                     'filename': file.filename,
                     'content_type': file.content_type,
                     'size': len(contents),
-                    'contents': contents  # Сохраняем для превью
+                    'contents': contents
                 })
 
             except Exception as file_error:
@@ -1154,9 +1156,18 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
             raise HTTPException(
                 status_code=400, detail="Нет валидных изображений для обработки")
 
-        # Сохраняем файлы для отладки
-        session_id = f"{int(time.time())}_{len(image_batch)}"
+        # Сохраняем отладочные файлы
+        session_id = f"main_{int(time.time())}_{len(image_batch)}"
         debug_folder = save_debug_files(image_batch, session_id)
+
+        logger.info(f"🔍 ДЕТАЛЬНАЯ ДИАГНОСТИКА:")
+        logger.info(f"  📁 Всего файлов получено: {len(files)}")
+        logger.info(f"  ✅ Валидных изображений: {len(image_batch)}")
+        logger.info(f"  📋 Порядок валидных файлов:")
+        for i, (_, filename) in enumerate(image_batch):
+            saved_filename = f"{i:02d}.webp"
+            logger.info(
+                f"    Индекс {i}: {saved_filename} (оригинал: {filename})")
         logger.info(f"🗂️ Отладочные файлы сохранены в: {debug_folder}")
 
         # Batch анализ всех изображений
