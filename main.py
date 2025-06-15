@@ -1151,18 +1151,10 @@ async def analyze_individual_images(files: List[UploadFile] = File(...)):
 
 @app.post("/api/analyze-multiple")
 async def analyze_multiple_images(files: List[UploadFile] = File(...)):
-    """Анализ нескольких изображений с группировкой по товарам"""
-    logger.info(f"📥 Получено {len(files)} файлов для анализа")
-
-    # Ограничиваем количество файлов (вне try блока для правильного HTTP статуса)
-    if len(files) > 50:
-        logger.warning(
-            f"⚠️ Слишком много файлов: {len(files)}, максимум 50")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Слишком много файлов: {len(files)}. Максимум 50 файлов за раз. Пожалуйста, разделите файлы на несколько групп.")
-
+    """Основная функция группировки товаров - использует проверенную логику диагностики"""
     try:
+        logger.info(f"🔍 ОСНОВНАЯ ГРУППИРОВКА: Получено {len(files)} файлов")
+
         # Собираем все валидные изображения
         image_batch = []
         file_info = []
@@ -1171,8 +1163,7 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
         for i, file in enumerate(files):
             logger.info(f"  {i}: {file.filename} ({file.content_type})")
 
-        # ИСПРАВЛЕНИЕ: НЕ сортируем файлы, сохраняем исходный порядок от пользователя
-        # Проблема была в том что сортировка ломала соответствие индексов!
+        # НЕ сортируем файлы, сохраняем исходный порядок от пользователя
         logger.info(f"📋 Сохраняем исходный порядок файлов (БЕЗ сортировки):")
         for i, file in enumerate(files):
             logger.info(f"  {i}: {file.filename} ({file.content_type})")
@@ -1203,10 +1194,9 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                     f"❌ Ошибка чтения файла {file.filename}: {file_error}")
                 continue
 
-        # Проверяем что есть валидные изображения (вне try блока для правильного HTTP статуса)
         if not image_batch:
             raise HTTPException(
-                status_code=400, detail="Нет валидных изображений для обработки")
+                status_code=400, detail="Нет валидных изображений")
 
         # Сохраняем отладочные файлы
         session_id = f"main_{int(time.time())}_{len(image_batch)}"
@@ -1220,39 +1210,107 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
             saved_filename = f"{i:02d}.webp"
             logger.info(
                 f"    Индекс {i}: {saved_filename} (оригинал: {filename})")
-        logger.info(f"🗂️ Отладочные файлы сохранены в: {debug_folder}")
 
-        # Batch анализ всех изображений
-        logger.info(
-            f"🚀 ВЫЗЫВАЕМ analyze_images_batch_with_claude для {len(image_batch)} изображений")
-        claude_response = analyze_images_batch_with_claude(image_batch)
-        logger.info(
-            f"🔍 ПОЛУЧЕН ОТВЕТ ОТ analyze_images_batch_with_claude: {claude_response[:200]}...")
+        # Подготавливаем изображения для batch запроса
+        image_contents = []
+        for i, (image_data, filename) in enumerate(image_batch):
+            logger.info(f"🖼️ Обработка изображения {i}: {filename}")
 
-        # Парсим результаты группировки из Claude (ТОЧНО КАК В ДИАГНОСТИКЕ)
+            # Изменяем размер изображения для соответствия ограничениям Claude
+            resized_image_data, mime_type = resize_image_for_claude(
+                image_data, max_size=2000)
+
+            # Кодируем изображение в base64
+            base64_image = base64.b64encode(resized_image_data).decode('utf-8')
+
+            image_contents.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": mime_type,
+                    "data": base64_image
+                }
+            })
+
+        # Промпт для группировки - ТОЧНО КАК В ДИАГНОСТИКЕ
+        main_prompt = f"""ГРУППИРОВКА ТОВАРОВ: Проанализируйте эти {len(image_batch)} изображений и сгруппируйте ОДИНАКОВЫЕ товары.
+
+КРИТИЧЕСКИ ВАЖНО: Изображения пронумерованы от 0 до {len(image_batch)-1} (всего {len(image_batch)} изображений).
+
+Порядок изображений (ЗАПОМНИТЕ ТОЧНЫЕ ИНДЕКСЫ):
+{chr(10).join([f"Индекс {i}: Изображение #{i+1}" for i in range(len(image_batch))])}
+
+ЗАДАЧА: Найти изображения которые показывают ОДИН И ТОТ ЖЕ товар с разных ракурсов.
+
+ПЕРЕД ОТВЕТОМ: Мысленно пронумеруйте каждое изображение и убедитесь что используете правильные индексы!
+
+ПРАВИЛА:
+1. Внимательно сравните каждое изображение
+2. Группируйте только ИДЕНТИЧНЫЕ предметы (одна и та же стиральная машина, один и тот же кондиционер)
+3. Разные модели/цвета/размеры = разные товары
+4. При малейшем сомнении - лучше разделить
+
+Используйте категории: {SOMON_CATEGORIES}
+
+ФОРМАТ ОТВЕТА - детальный JSON с объяснениями:
+[
+  {{
+    "group_id": 1,
+    "title": "Название товара",
+    "category": "Категория",
+    "subcategory": "Подкатегория",
+    "color": "цвет",
+    "reasoning": "Почему эти изображения сгруппированы вместе",
+    "image_indexes": [номера_изображений],
+    "description": "Детальное описание товара"
+  }}
+]
+
+ВАЖНО:
+- Используйте только индексы от 0 до {len(image_batch)-1}
+- Каждый индекс должен использоваться РОВНО ОДИН РАЗ
+- Объясните свои решения в поле "reasoning"!
+
+ВЕРНИТЕ ТОЛЬКО JSON БЕЗ ДОПОЛНИТЕЛЬНОГО ТЕКСТА."""
+
         try:
-            logger.info(f"🔍 ПОЛНЫЙ ОТВЕТ CLAUDE: {claude_response}")
+            # Инициализация клиента
+            api_key = os.getenv("ANTHROPIC_API_KEY")
+            client = anthropic.Anthropic(api_key=api_key, timeout=60.0)
 
-            # Claude Sonnet 4 может обернуть JSON в markdown блок
-            if claude_response.strip().startswith('```'):
-                # Извлекаем JSON из markdown блока
-                lines = claude_response.strip().split('\n')
-                json_lines = []
-                in_json = False
-                for line in lines:
-                    if line.strip() == '```json' or line.strip() == '```':
-                        in_json = not in_json
-                        continue
-                    if in_json or (not line.startswith('```')):
-                        json_lines.append(line)
-                claude_response = '\n'.join(json_lines)
+            logger.info("🚀 ОТПРАВЛЯЕМ ОСНОВНОЙ ЗАПРОС В CLAUDE API...")
 
-            # ИСПОЛЬЗУЕМ ПРОСТОЙ ПАРСИНГ КАК В ДИАГНОСТИКЕ
-            products = json.loads(claude_response)
+            # Отправляем batch запрос к Claude с параметрами как на claude.ai
+            message = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=8192,
+                temperature=0,  # Делаем ответы более детерминированными
+                system="You are a helpful assistant that analyzes images accurately. When grouping images, be EXTREMELY careful with index numbers. Double-check that you're using the correct index for each image. Remember: indices start from 0, not 1. Each index must be used exactly once.",
+                messages=[
+                    {
+                        "role": "user",
+                        "content": [
+                            *image_contents,
+                            {
+                                "type": "text",
+                                "text": main_prompt
+                            }
+                        ],
+                    }
+                ],
+            )
+
+            response_text = message.content[0].text
             logger.info(
-                f"✅ Найдено {len(products)} сгруппированных товаров")
+                f"✅ ПОЛУЧЕН ОСНОВНОЙ ОТВЕТ! Длина: {len(response_text)} символов")
+            logger.info(f"🔍 ПОЛНЫЙ ОТВЕТ: {response_text}")
 
-            # Дополнительная валидация индексов (как в диагностике)
+            # Парсим JSON ответ - ПРОСТОЙ ПОДХОД КАК В ДИАГНОСТИКЕ
+            products = json.loads(response_text)
+            if not isinstance(products, list):
+                raise ValueError("Ответ Claude не является списком")
+
+            # Определяем максимальный допустимый индекс
             max_valid_index = len(image_batch) - 1
             logger.info(
                 f"🔧 Валидация индексов: максимальный допустимый индекс = {max_valid_index}")
@@ -1369,7 +1427,6 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                     "image_indexes": valid_indexes
                 })
 
-            # ИСПРАВЛЕНИЕ: Перенесли логирование и return ПОСЛЕ цикла for
             logger.info(f"✅ Сформировано {len(results)} товарных групп")
 
             return JSONResponse({
@@ -1389,27 +1446,20 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
 
         except (json.JSONDecodeError, ValueError) as e:
             logger.error(f"❌ КРИТИЧЕСКАЯ ОШИБКА ПАРСИНГА JSON: {e}")
-            logger.error(f"🔍 ПОЛНЫЙ ОТВЕТ CLAUDE: {claude_response}")
-            logger.error(f"🔍 ТИП ОТВЕТА: {type(claude_response)}")
-            logger.error(f"🔍 ДЛИНА ОТВЕТА: {len(claude_response)} символов")
-            # НЕ ИСПОЛЬЗУЕМ FALLBACK! Возвращаем ошибку как в диагностике
+            logger.error(f"🔍 ПОЛНЫЙ ОТВЕТ CLAUDE: {response_text}")
+            logger.error(f"🔍 ТИП ОТВЕТА: {type(response_text)}")
+            logger.error(f"🔍 ДЛИНА ОТВЕТА: {len(response_text)} символов")
             return JSONResponse({
                 "success": False,
                 "error": f"Ошибка парсинга JSON от Claude: {str(e)}",
-                "raw_response": claude_response,
+                "raw_response": response_text,
                 "debug_folder": debug_folder,
                 "session_id": session_id
             }, status_code=500)
 
-        # НЕТ FALLBACK! Если дошли сюда, значит есть ошибка в логике
-        logger.error("❌ НЕДОСТИЖИМЫЙ КОД: дошли до конца функции без return")
-        return JSONResponse({
-            "success": False,
-            "error": "Внутренняя ошибка: недостижимый код выполнен"
-        }, status_code=500)
-
     except Exception as e:
-        logger.error(f"❌ Ошибка batch анализа: {e}\n{traceback.format_exc()}")
+        logger.error(
+            f"❌ Ошибка основного анализа: {e}\n{traceback.format_exc()}")
         return JSONResponse({
             "success": False,
             "error": f"Ошибка сервера: {str(e)}"
