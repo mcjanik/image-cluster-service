@@ -745,6 +745,21 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
             # Пытаемся распарсить JSON
             try:
                 import json
+
+                # Claude Sonnet 4 может обернуть JSON в markdown блок
+                if response_text.strip().startswith('```'):
+                    # Извлекаем JSON из markdown блока
+                    lines = response_text.strip().split('\n')
+                    json_lines = []
+                    in_json = False
+                    for line in lines:
+                        if line.strip() == '```json' or line.strip() == '```':
+                            in_json = not in_json
+                            continue
+                        if in_json or (not line.startswith('```')):
+                            json_lines.append(line)
+                    response_text = '\n'.join(json_lines)
+
                 groups = json.loads(response_text)
 
                 # Дополнительная валидация индексов
@@ -1059,6 +1074,20 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
 
         # Парсим результаты группировки из Claude
         try:
+            # Claude Sonnet 4 может обернуть JSON в markdown блок
+            if claude_response.strip().startswith('```'):
+                # Извлекаем JSON из markdown блока
+                lines = claude_response.strip().split('\n')
+                json_lines = []
+                in_json = False
+                for line in lines:
+                    if line.strip() == '```json' or line.strip() == '```':
+                        in_json = not in_json
+                        continue
+                    if in_json or (not line.startswith('```')):
+                        json_lines.append(line)
+                claude_response = '\n'.join(json_lines)
+
             # Пытаемся извлечь JSON из ответа Claude
             json_start = claude_response.find('[')
             json_end = claude_response.rfind(']') + 1
