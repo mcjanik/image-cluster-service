@@ -187,16 +187,15 @@ def save_debug_files(files_data: List[tuple], session_id: str) -> str:
 
         # Сохраняем каждый файл с индексом
         for idx, (contents, filename) in enumerate(files_data):
-            # Определяем расширение
-            ext = filename.split('.')[-1] if '.' in filename else 'jpg'
-            debug_filename = f"{idx:02d}_{filename}"
+            # Всегда используем .webp расширение для единообразия
+            debug_filename = f"{idx:02d}.webp"
             debug_path = os.path.join(session_folder, debug_filename)
 
             with open(debug_path, 'wb') as f:
                 f.write(contents)
 
             logger.info(
-                f"💾 Сохранен файл {idx}: {debug_filename} ({len(contents)} байт)")
+                f"💾 Сохранен файл {idx}: {debug_filename} (оригинал: {filename}, {len(contents)} байт)")
 
         # Создаем файл с метаданными
         metadata = {
@@ -207,7 +206,7 @@ def save_debug_files(files_data: List[tuple], session_id: str) -> str:
                 {
                     "index": idx,
                     "original_filename": filename,
-                    "debug_filename": f"{idx:02d}_{filename}",
+                    "debug_filename": f"{idx:02d}.webp",
                     "size_bytes": len(contents)
                 }
                 for idx, (contents, filename) in enumerate(files_data)
@@ -486,7 +485,7 @@ def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> st
             model="claude-sonnet-4-20250514",
             max_tokens=8192,
             temperature=0,  # Делаем ответы более детерминированными
-            system="You are a helpful assistant that analyzes images accurately. When grouping images, be very careful with index numbers and ensure each index is used exactly once.",
+            system="You are a helpful assistant that analyzes images accurately. When grouping images, be EXTREMELY careful with index numbers. Double-check that you're using the correct index for each image. Remember: indices start from 0, not 1. Each index must be used exactly once.",
             messages=[
                 {
                     "role": "user",
@@ -672,12 +671,14 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
         # ДИАГНОСТИЧЕСКИЙ промпт для группировки
         diagnostic_prompt = f"""ДИАГНОСТИКА ГРУППИРОВКИ: Проанализируйте эти {len(image_batch)} изображений и сгруппируйте ОДИНАКОВЫЕ товары.
 
-ВАЖНО: Изображения пронумерованы от 0 до {len(image_batch)-1} (всего {len(image_batch)} изображений).
+КРИТИЧЕСКИ ВАЖНО: Изображения пронумерованы от 0 до {len(image_batch)-1} (всего {len(image_batch)} изображений).
 
-Порядок изображений:
-{chr(10).join([f"Изображение {i}: (это {i+1}-е изображение в последовательности)" for i in range(len(image_batch))])}
+Порядок изображений (ЗАПОМНИТЕ ТОЧНЫЕ ИНДЕКСЫ):
+{chr(10).join([f"Индекс {i}: Изображение #{i+1}" for i in range(len(image_batch))])}
 
 ЗАДАЧА: Найти изображения которые показывают ОДИН И ТОТ ЖЕ товар с разных ракурсов.
+
+ПЕРЕД ОТВЕТОМ: Мысленно пронумеруйте каждое изображение и убедитесь что используете правильные индексы!
 
 ПРАВИЛА:
 1. Внимательно сравните каждое изображение
@@ -722,7 +723,7 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                 model="claude-sonnet-4-20250514",
                 max_tokens=8192,
                 temperature=0,  # Делаем ответы более детерминированными
-                system="You are a helpful assistant that analyzes images accurately. When grouping images, be very careful with index numbers and ensure each index is used exactly once.",
+                system="You are a helpful assistant that analyzes images accurately. When grouping images, be EXTREMELY careful with index numbers. Double-check that you're using the correct index for each image. Remember: indices start from 0, not 1. Each index must be used exactly once.",
                 messages=[
                     {
                         "role": "user",
@@ -808,7 +809,7 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                 logger.info(f"  📁 Количество image_batch: {len(image_batch)}")
                 logger.info(f"  🔗 Будет создано image_urls:")
                 for i, (_, filename) in enumerate(image_batch):
-                    url = f"/debug-files/{session_id}/{i:02d}_{filename}"
+                    url = f"/debug-files/{session_id}/{i:02d}.webp"
                     logger.info(f"    image_urls[{i}] = {url}")
 
                 logger.info(f"  📋 Группы и их индексы:")
@@ -821,7 +822,7 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                     for idx in indexes:
                         if 0 <= idx < len(image_batch):
                             _, filename = image_batch[idx]
-                            expected_url = f"/debug-files/{session_id}/{idx:02d}_{filename}"
+                            expected_url = f"/debug-files/{session_id}/{idx:02d}.webp"
                             logger.info(f"      Индекс {idx} → {expected_url}")
 
                 return JSONResponse({
@@ -833,7 +834,7 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                     "debug_folder": debug_folder,
                     "session_id": session_id,
                     "file_order": [{"index": i, "filename": filename} for i, (_, filename) in enumerate(image_batch)],
-                    "image_urls": [f"/debug-files/{session_id}/{i:02d}_{filename}" for i, (_, filename) in enumerate(image_batch)],
+                    "image_urls": [f"/debug-files/{session_id}/{i:02d}.webp" for i, (_, filename) in enumerate(image_batch)],
                     "message": "Диагностика группировки завершена"
                 })
 
@@ -996,7 +997,7 @@ async def analyze_individual_images(files: List[UploadFile] = File(...)):
             "descriptions": individual_descriptions,
             "debug_folder": debug_folder,
             "session_id": session_id,
-            "image_urls": [f"/debug-files/{session_id}/{i:02d}_{filename}" for i, (_, filename) in enumerate(image_batch)],
+            "image_urls": [f"/debug-files/{session_id}/{i:02d}.webp" for i, (_, filename) in enumerate(image_batch)],
             "message": "Диагностический анализ завершен - каждое изображение описано отдельно"
         })
 
