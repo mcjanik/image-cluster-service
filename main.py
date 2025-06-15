@@ -277,7 +277,7 @@ def analyze_image_with_claude(image_data: bytes, filename: str) -> str:
 
         # Отправляем запрос к Claude
         message = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-sonnet-4-20250514",
             max_tokens=2000,
             messages=[
                 {
@@ -363,6 +363,43 @@ def load_categories_from_file() -> dict:
         }
 
 
+def smart_group_products(descriptions: List[dict]) -> List[dict]:
+    """Умная группировка товаров на основе их описаний"""
+    groups = []
+    used_indices = set()
+
+    for i, desc1 in enumerate(descriptions):
+        if i in used_indices:
+            continue
+
+        # Начинаем новую группу
+        group = {
+            "title": desc1.get("title", "Товар"),
+            "category": desc1.get("category", "Разное"),
+            "subcategory": desc1.get("subcategory", ""),
+            "color": desc1.get("color", ""),
+            "image_indexes": [i],
+            "descriptions": [desc1.get("description", "")]
+        }
+        used_indices.add(i)
+
+        # Ищем похожие товары
+        for j, desc2 in enumerate(descriptions):
+            if j <= i or j in used_indices:
+                continue
+
+            # Простое сравнение по названию и категории
+            if (desc1.get("title", "").lower() == desc2.get("title", "").lower() and
+                    desc1.get("category", "").lower() == desc2.get("category", "").lower()):
+                group["image_indexes"].append(j)
+                group["descriptions"].append(desc2.get("description", ""))
+                used_indices.add(j)
+
+        groups.append(group)
+
+    return groups
+
+
 def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> str:
     """Анализирует batch изображений и группирует их по товарам, возвращает JSON строку"""
     try:
@@ -411,6 +448,9 @@ def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> st
 
 ВАЖНО: Изображения пронумерованы от 0 до {len(image_batch)-1} (всего {len(image_batch)} изображений).
 
+Порядок изображений:
+{chr(10).join([f"Изображение {i}: (это {i+1}-е изображение в последовательности)" for i in range(len(image_batch))])}
+
 ЗАДАЧА: Найти изображения которые показывают ОДИН И ТОТ ЖЕ товар с разных ракурсов.
 
 ПРАВИЛА:
@@ -441,10 +481,12 @@ def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> st
 
         logger.info("🚀 ОТПРАВЛЯЕМ BATCH ЗАПРОС В CLAUDE API...")
 
-        # Отправляем batch запрос к Claude
+        # Отправляем batch запрос к Claude с параметрами как на claude.ai
         message = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
+            model="claude-sonnet-4-20250514",
             max_tokens=8192,
+            temperature=0,  # Делаем ответы более детерминированными
+            system="You are a helpful assistant that analyzes images accurately. When grouping images, be very careful with index numbers and ensure each index is used exactly once.",
             messages=[
                 {
                     "role": "user",
@@ -675,10 +717,12 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
 
             logger.info("🚀 ОТПРАВЛЯЕМ ДИАГНОСТИЧЕСКИЙ ЗАПРОС В CLAUDE API...")
 
-            # Отправляем batch запрос к Claude
+            # Отправляем batch запрос к Claude с параметрами как на claude.ai
             message = client.messages.create(
-                model="claude-3-5-sonnet-20241022",
+                model="claude-sonnet-4-20250514",
                 max_tokens=8192,
+                temperature=0,  # Делаем ответы более детерминированными
+                system="You are a helpful assistant that analyzes images accurately. When grouping images, be very careful with index numbers and ensure each index is used exactly once.",
                 messages=[
                     {
                         "role": "user",
@@ -889,7 +933,7 @@ async def analyze_individual_images(files: List[UploadFile] = File(...)):
 
                 # Отправляем запрос к Claude
                 message = client.messages.create(
-                    model="claude-3-5-sonnet-20241022",
+                    model="claude-sonnet-4-20250514",
                     max_tokens=200,
                     messages=[
                         {
