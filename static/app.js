@@ -33,33 +33,40 @@ const PhotoListingApp = () => {
   // Функция для загрузки категорий с сервера
   const loadCategories = async () => {
     try {
+      console.log('🔄 Загружаем категории...');
       const response = await fetch('/api/categories');
       const data = await response.json();
 
+      console.log('📦 Ответ сервера категорий:', data);
+
       if (data.success) {
+        console.log('✅ Категории загружены:', Object.keys(data.categories).length, 'категорий');
         setCategories(data.categories);
         setCategoriesLoaded(true);
-        console.log('Категории загружены:', data.categories);
       } else {
-        console.error('Ошибка загрузки категорий:', data.error);
+        console.error('❌ Ошибка загрузки категорий:', data.error);
         // Fallback к базовым категориям
-        setCategories({
+        const fallbackCategories = {
           'Одежда и личные вещи': ['Мужская одежда', 'Женская одежда', 'Обувь'],
           'Электроника и бытовая техника': ['Телефоны и связь', 'Компьютеры и оргтехника'],
           'Детский мир': ['Детская одежда', 'Игрушки'],
           'Все для дома': ['Мебель', 'Бытовая техника']
-        });
+        };
+        console.log('🔄 Используем fallback категории:', fallbackCategories);
+        setCategories(fallbackCategories);
         setCategoriesLoaded(true);
       }
     } catch (error) {
-      console.error('Ошибка при загрузке категорий:', error);
+      console.error('❌ Ошибка при загрузке категорий:', error);
       // Fallback к базовым категориям
-      setCategories({
+      const fallbackCategories = {
         'Одежда и личные вещи': ['Мужская одежда', 'Женская одежда', 'Обувь'],
         'Электроника и бытовая техника': ['Телефоны и связь', 'Компьютеры и оргтехника'],
         'Детский мир': ['Детская одежда', 'Игрушки'],
         'Все для дома': ['Мебель', 'Бытовая техника']
-      });
+      };
+      console.log('🔄 Используем fallback категории после ошибки:', fallbackCategories);
+      setCategories(fallbackCategories);
       setCategoriesLoaded(true);
     }
   };
@@ -312,6 +319,37 @@ const PhotoListingApp = () => {
     setResults(prev => prev.map(item =>
       item.id === id ? { ...item, [field]: value } : item
     ));
+  };
+
+  const removeImageFromProduct = (productId, imageIndex) => {
+    if (confirm('Вы уверены, что хотите удалить это изображение?')) {
+      setResults(prev => prev.map(item => {
+        if (item.id === productId) {
+          const newImages = item.images.filter((_, index) => index !== imageIndex);
+          return { ...item, images: newImages };
+        }
+        return item;
+      }));
+    }
+  };
+
+  const moveImageToProduct = (fromProductId, imageIndex, toProductId) => {
+    setResults(prev => {
+      const fromProduct = prev.find(item => item.id === fromProductId);
+      const imageToMove = fromProduct.images[imageIndex];
+
+      return prev.map(item => {
+        if (item.id === fromProductId) {
+          // Удаляем изображение из исходного товара
+          const newImages = item.images.filter((_, index) => index !== imageIndex);
+          return { ...item, images: newImages };
+        } else if (item.id === toProductId) {
+          // Добавляем изображение к целевому товару
+          return { ...item, images: [...item.images, imageToMove] };
+        }
+        return item;
+      });
+    });
   };
 
   const deleteResult = (id) => {
@@ -701,6 +739,9 @@ const PhotoListingApp = () => {
               onUpdate={updateResult}
               onDelete={deleteResult}
               onPublish={publishItem}
+              onRemoveImage={removeImageFromProduct}
+              onMoveImage={moveImageToProduct}
+              allProducts={results}
             />
           ))}
         </div>
@@ -718,9 +759,22 @@ const PhotoListingApp = () => {
   );
 };
 
-const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDelete, onPublish }) => {
+const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDelete, onPublish, onRemoveImage, onMoveImage, allProducts }) => {
   const [formData, setFormData] = useState(item);
   const [isExpanded, setIsExpanded] = useState(false);
+
+  // Синхронизируем formData с item при изменениях
+  useEffect(() => {
+    console.log('🔄 Обновляем formData для товара:', item.id, item);
+    setFormData(item);
+  }, [item]);
+
+  // Отладочная информация для категорий
+  useEffect(() => {
+    console.log('📂 Категории в ResultCard:', Object.keys(categories).length, 'категорий');
+    console.log('📂 Текущая категория товара:', formData.mainCategory);
+    console.log('📂 Подкатегории для текущей категории:', categories[formData.mainCategory]);
+  }, [categories, formData.mainCategory]);
 
   const handleChange = (field, value) => {
     const newData = { ...formData, [field]: value };
@@ -750,15 +804,21 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
                 className="w-16 h-16 object-cover rounded"
               />
             ) : (
-              <div className="relative">
-                <img
-                  src={item.images[0]}
-                  alt={formData.title}
-                  className="w-16 h-16 object-cover rounded"
-                />
-                <div className="absolute -top-1 -right-1 bg-orange-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold">
-                  {item.images.length}
-                </div>
+              <div className="flex space-x-1">
+                {item.images.slice(0, 2).map((image, index) => (
+                  <div key={index} className="relative">
+                    <img
+                      src={image}
+                      alt={`${formData.title} - фото ${index + 1}`}
+                      className="w-8 h-16 object-cover rounded"
+                    />
+                  </div>
+                ))}
+                {item.images.length > 2 && (
+                  <div className="w-8 h-16 bg-gray-200 rounded flex items-center justify-center">
+                    <span className="text-xs font-bold text-gray-600">+{item.images.length - 2}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -800,18 +860,54 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
         <div className="px-4 pb-4 border-t border-gray-100 pt-4 space-y-3">
 
           {/* Все изображения товара */}
-          {item.images.length > 1 && (
+          {item.images.length > 0 && (
             <div>
               <label className="block text-xs text-gray-600 mb-2">Все фотографии товара ({item.images.length})</label>
               <div className="grid grid-cols-4 gap-2">
                 {item.images.map((image, index) => (
-                  <img
-                    key={index}
-                    src={image}
-                    alt={`${formData.title} - фото ${index + 1}`}
-                    className="w-full h-16 object-cover rounded border hover:border-orange-500 transition-colors"
-                  />
+                  <div key={index} className="relative group">
+                    <img
+                      src={image}
+                      alt={`${formData.title} - фото ${index + 1}`}
+                      className="w-full h-16 object-cover rounded border hover:border-orange-500 transition-colors"
+                      draggable="true"
+                      onDragStart={(e) => {
+                        e.dataTransfer.setData('text/plain', JSON.stringify({
+                          fromProductId: item.id,
+                          imageIndex: index,
+                          imageUrl: image
+                        }));
+                      }}
+                    />
+                    {item.images.length > 1 && (
+                      <button
+                        onClick={() => onRemoveImage && onRemoveImage(item.id, index)}
+                        className="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-xs opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
                 ))}
+              </div>
+
+              {/* Зона для перетаскивания */}
+              <div
+                className="mt-2 p-2 border-2 border-dashed border-gray-300 rounded text-center text-xs text-gray-500 hover:border-orange-500 transition-colors"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  try {
+                    const data = JSON.parse(e.dataTransfer.getData('text/plain'));
+                    if (data.fromProductId !== item.id && onMoveImage) {
+                      onMoveImage(data.fromProductId, data.imageIndex, item.id);
+                    }
+                  } catch (err) {
+                    console.error('Ошибка перетаскивания:', err);
+                  }
+                }}
+              >
+                Перетащите сюда фото из другого товара
               </div>
             </div>
           )}
@@ -819,10 +915,11 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
           <div>
             <label className="block text-xs text-gray-600 mb-1">Категория</label>
             <select
-              value={formData.mainCategory}
+              value={formData.mainCategory || ''}
               onChange={(e) => handleMainCategoryChange(e.target.value)}
               className="w-full p-2 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-orange-500"
             >
+              <option value="">Выберите категорию</option>
               {Object.keys(categories).map(cat => (
                 <option key={cat} value={cat}>{cat}</option>
               ))}
@@ -832,18 +929,17 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
           <div>
             <label className="block text-xs text-gray-600 mb-1">Подкатегория</label>
             <select
-              value={formData.subCategory}
+              value={formData.subCategory || ''}
               onChange={(e) => handleChange('subCategory', e.target.value)}
               className="w-full p-2 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-orange-500"
-              disabled={!categories[formData.mainCategory] || categories[formData.mainCategory].length === 0}
+              disabled={!formData.mainCategory || !categories[formData.mainCategory] || categories[formData.mainCategory].length === 0}
             >
-              {!categories[formData.mainCategory] || categories[formData.mainCategory].length === 0 ? (
-                <option value="">Нет подкатегорий</option>
-              ) : (
+              <option value="">Выберите подкатегорию</option>
+              {formData.mainCategory && categories[formData.mainCategory] && categories[formData.mainCategory].length > 0 ? (
                 categories[formData.mainCategory].map(subcat => (
                   <option key={subcat} value={subcat}>{subcat}</option>
                 ))
-              )}
+              ) : null}
             </select>
           </div>
 

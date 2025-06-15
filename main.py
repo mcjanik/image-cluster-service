@@ -565,6 +565,7 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
 
                     # Собираем изображения для этого товара
                     product_images = []
+                    valid_indexes = []
                     for img_idx in image_indexes:
                         if 0 <= img_idx < len(file_info):
                             info = file_info[img_idx]
@@ -572,14 +573,21 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                                 info['contents']).decode('utf-8')
                             product_images.append(
                                 f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
+                            valid_indexes.append(img_idx)
+                        else:
+                            logger.warning(
+                                f"⚠️ Неверный индекс изображения: {img_idx} (максимум {len(file_info)-1}) для товара '{title}'")
 
                     if not product_images:  # Если нет изображений, берем первое доступное
+                        logger.warning(
+                            f"⚠️ Товар '{title}' не имеет валидных изображений, используем fallback")
                         if file_info:
                             info = file_info[0]
                             image_base64 = base64.b64encode(
                                 info['contents']).decode('utf-8')
                             product_images.append(
                                 f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
+                            valid_indexes = [0]
 
                     # Создаем описание товара
                     description = f"""🏷️ ТОВАР: {title}
@@ -593,7 +601,7 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                         "filename": f"grouped_product_{product_idx}",
                         "width": 800,
                         "height": 600,
-                        "size_bytes": sum(file_info[i]['size'] for i in image_indexes if 0 <= i < len(file_info)),
+                        "size_bytes": sum(file_info[i]['size'] for i in valid_indexes),
                         "images": product_images,  # Массив изображений для товара
                         # Первое изображение для совместимости
                         "image_preview": product_images[0] if product_images else "",
@@ -601,7 +609,8 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                         "title": title,
                         "category": category,
                         "subcategory": subcategory,
-                        "image_indexes": image_indexes
+                        "image_indexes": valid_indexes,  # Используем только валидные индексы
+                        "original_indexes": image_indexes  # Сохраняем оригинальные для отладки
                     })
 
                 logger.info(f"✅ Сформировано {len(results)} товарных групп")

@@ -736,6 +736,11 @@
         onUpdate(item.id, field, value);
       };
 
+      // Синхронизируем formData с item при изменениях
+      useEffect(() => {
+        setFormData(item);
+      }, [item]);
+
       const handleMainCategoryChange = (mainCategory) => {
         handleChange('mainCategory', mainCategory);
         // Автоматически выбираем первую подкатегорию при смене главной категории
@@ -758,15 +763,21 @@
                     className="w-16 h-16 md:w-20 md:h-20 object-cover rounded"
                   />
                 ) : (
-                  <div className="relative">
-                    <img
-                      src={item.images[0]}
-                      alt={formData.title}
-                      className="w-16 h-16 md:w-20 md:h-20 object-cover rounded"
-                    />
-                    <div className="absolute -top-1 -right-1 bg-somon-orange text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold">
-                      {item.images.length}
-                    </div>
+                  <div className="flex space-x-1">
+                    {item.images.slice(0, 2).map((image, index) => (
+                      <div key={index} className="relative">
+                        <img
+                          src={image}
+                          alt={`${formData.title} - фото ${index + 1}`}
+                          className="w-8 h-16 md:w-10 md:h-20 object-cover rounded"
+                        />
+                      </div>
+                    ))}
+                    {item.images.length > 2 && (
+                      <div className="w-8 h-16 md:w-10 md:h-20 bg-gray-200 rounded flex items-center justify-center">
+                        <span className="text-xs font-bold text-gray-600">+{item.images.length - 2}</span>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -834,10 +845,11 @@
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Категория</label>
                 <select
-                  value={formData.mainCategory}
+                  value={formData.mainCategory || ''}
                   onChange={(e) => handleMainCategoryChange(e.target.value)}
                   className="w-full p-2 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-somon-orange"
                 >
+                  <option value="">Выберите категорию</option>
                   {Object.keys(categories).map(cat => (
                     <option key={cat} value={cat}>{cat}</option>
                   ))}
@@ -847,18 +859,17 @@
               <div>
                 <label className="block text-xs text-gray-600 mb-1">Подкатегория</label>
                 <select
-                  value={formData.subCategory}
+                  value={formData.subCategory || ''}
                   onChange={(e) => handleChange('subCategory', e.target.value)}
                   className="w-full p-2 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-somon-orange"
-                  disabled={!categories[formData.mainCategory] || categories[formData.mainCategory].length === 0}
+                  disabled={!formData.mainCategory || !categories[formData.mainCategory] || categories[formData.mainCategory].length === 0}
                 >
-                  {!categories[formData.mainCategory] || categories[formData.mainCategory].length === 0 ? (
-                    <option value="">Нет подкатегорий</option>
-                  ) : (
+                  <option value="">Выберите подкатегорию</option>
+                  {formData.mainCategory && categories[formData.mainCategory] && categories[formData.mainCategory].length > 0 ? (
                     categories[formData.mainCategory].map(subcat => (
                       <option key={subcat} value={subcat}>{subcat}</option>
                     ))
-                  )}
+                  ) : null}
                 </select>
               </div>
 
