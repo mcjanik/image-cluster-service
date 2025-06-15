@@ -152,25 +152,32 @@ const PhotoListingApp = () => {
       if (data.success) {
         // Обрабатываем результаты
         const processedResults = data.results.map(result => {
-          const mainCategory = detectCategory(result.description);
+          // Если результат уже содержит категории от backend, используем их
+          const backendCategory = result.category;
+          const backendSubcategory = result.subcategory;
+
+          // Иначе определяем категории через анализ описания
+          const detectedCategory = backendCategory || detectCategory(result.description);
+          const detectedSubcategory = backendSubcategory || detectSubCategory(result.description, detectedCategory);
+
           return {
             id: result.id,
-            images: [result.image_preview],
-            title: extractTitle(result.description),
+            images: result.images || [result.image_preview], // Поддержка множественных изображений
+            title: result.title || extractTitle(result.description),
             description: result.description,
-            mainCategory: mainCategory,
-            subCategory: detectSubCategory(result.description, mainCategory),
+            mainCategory: detectedCategory,
+            subCategory: detectedSubcategory,
             price: extractPrice(result.description),
             currency: 'сомони',
             brand: extractBrand(result.description),
             condition: extractCondition(result.description),
             location: 'Душанбе',
             userInput: userDescription,
-
             filename: result.filename,
             width: result.width,
             height: result.height,
-            size_bytes: result.size_bytes
+            size_bytes: result.size_bytes,
+            image_indexes: result.image_indexes || []
           };
         });
 
@@ -723,8 +730,11 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
 
   const handleMainCategoryChange = (mainCategory) => {
     handleChange('mainCategory', mainCategory);
+    // Автоматически выбираем первую подкатегорию при смене главной категории
     if (categories[mainCategory] && categories[mainCategory].length > 0) {
       handleChange('subCategory', categories[mainCategory][0]);
+    } else {
+      handleChange('subCategory', '');
     }
   };
 
@@ -732,11 +742,26 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
     <div className="bg-white rounded-lg border product-card">
       <div className="p-4">
         <div className="flex">
-          <img
-            src={item.images[0]}
-            alt={formData.title}
-            className="w-16 h-16 object-cover rounded mr-3 flex-shrink-0"
-          />
+          <div className="flex-shrink-0 mr-3">
+            {item.images.length === 1 ? (
+              <img
+                src={item.images[0]}
+                alt={formData.title}
+                className="w-16 h-16 object-cover rounded"
+              />
+            ) : (
+              <div className="relative">
+                <img
+                  src={item.images[0]}
+                  alt={formData.title}
+                  className="w-16 h-16 object-cover rounded"
+                />
+                <div className="absolute -top-1 -right-1 bg-orange-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs font-bold">
+                  {item.images.length}
+                </div>
+              </div>
+            )}
+          </div>
           <div className="flex-1 min-w-0">
             <input
               type="text"
@@ -774,6 +799,22 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
       {isExpanded && (
         <div className="px-4 pb-4 border-t border-gray-100 pt-4 space-y-3">
 
+          {/* Все изображения товара */}
+          {item.images.length > 1 && (
+            <div>
+              <label className="block text-xs text-gray-600 mb-2">Все фотографии товара ({item.images.length})</label>
+              <div className="grid grid-cols-4 gap-2">
+                {item.images.map((image, index) => (
+                  <img
+                    key={index}
+                    src={image}
+                    alt={`${formData.title} - фото ${index + 1}`}
+                    className="w-full h-16 object-cover rounded border hover:border-orange-500 transition-colors"
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs text-gray-600 mb-1">Категория</label>
@@ -794,10 +835,15 @@ const ResultCard = ({ item, categories, conditions, currencies, onUpdate, onDele
               value={formData.subCategory}
               onChange={(e) => handleChange('subCategory', e.target.value)}
               className="w-full p-2 border border-gray-300 rounded text-sm focus:ring-1 focus:ring-orange-500"
+              disabled={!categories[formData.mainCategory] || categories[formData.mainCategory].length === 0}
             >
-              {categories[formData.mainCategory]?.map(subcat => (
-                <option key={subcat} value={subcat}>{subcat}</option>
-              ))}
+              {!categories[formData.mainCategory] || categories[formData.mainCategory].length === 0 ? (
+                <option value="">Нет подкатегорий</option>
+              ) : (
+                categories[formData.mainCategory].map(subcat => (
+                  <option key={subcat} value={subcat}>{subcat}</option>
+                ))
+              )}
             </select>
           </div>
 

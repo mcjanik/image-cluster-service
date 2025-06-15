@@ -11,6 +11,7 @@ import traceback
 from typing import List
 import logging
 import logging.handlers
+import time
 
 # Создаем папку для логов
 os.makedirs("logs", exist_ok=True)
@@ -307,8 +308,8 @@ def load_categories_from_file() -> dict:
         }
 
 
-def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> List[str]:
-    """Анализирует batch изображений и группирует их по товарам"""
+def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> str:
+    """Анализирует batch изображений и группирует их по товарам, возвращает JSON строку"""
     try:
         logger.info(f"🔍 НАЧИНАЕМ BATCH АНАЛИЗ: {len(image_batch)} изображений")
 
@@ -317,7 +318,7 @@ def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> Li
         if not api_key:
             error_msg = "❌ API ключ Anthropic не настроен в переменных окружения"
             logger.error(error_msg)
-            return [error_msg] * len(image_batch)
+            return ""
 
         logger.info(f"✅ API ключ найден: {api_key[:15]}...{api_key[-4:]}")
 
@@ -412,92 +413,12 @@ def analyze_images_batch_with_claude(image_batch: List[tuple[bytes, str]]) -> Li
         logger.info(f"🔍 ПЕРВЫЕ 1000 СИМВОЛОВ ОТВЕТА: {response_text[:1000]}")
         logger.info(f"🔍 ПОСЛЕДНИЕ 500 СИМВОЛОВ ОТВЕТА: {response_text[-500:]}")
 
-        # Парсим JSON ответ
-        try:
-            # Извлекаем JSON из ответа (может быть обернут в ```json```)
-            json_start = response_text.find('[')
-            json_end = response_text.rfind(']') + 1
-
-            logger.info(f"🔍 JSON позиции: start={json_start}, end={json_end}")
-
-            if json_start == -1 or json_end == 0:
-                raise ValueError("JSON не найден в ответе")
-
-            json_str = response_text[json_start:json_end]
-            logger.info(
-                f"🔍 ИЗВЛЕЧЕННЫЙ JSON (первые 500 символов): {json_str[:500]}")
-
-            products = json.loads(json_str)
-
-            logger.info(f"✅ Распознано {len(products)} товаров")
-
-            # ЛОГИРУЕМ КАЖДЫЙ ТОВАР
-            for i, product in enumerate(products):
-                title = product.get('title', 'Товар')
-                image_indexes = product.get('image_indexes', [])
-                logger.info(
-                    f"🔍 Товар {i+1}: '{title}' -> изображения {image_indexes}")
-
-            # Подсчитываем общее количество изображений в группах
-            total_images_in_groups = sum(
-                len(product.get('image_indexes', [])) for product in products)
-            logger.info(
-                f"🔍 ВСЕГО изображений в группах: {total_images_in_groups} из {len(image_batch)}")
-
-            # Создаем описания для каждого изображения
-            descriptions = [""] * len(image_batch)
-
-            for product in products:
-                title = product.get('title', 'Товар')
-                category = product.get('category', 'Разное')
-                subcategory = product.get('subcategory', '')
-                image_indexes = product.get('image_indexes', [])
-
-                description = f"""🏷️ ТОВАР: {title}
-📂 КАТЕГОРИЯ: {category}
-📂 ПОДКАТЕГОРИЯ: {subcategory}
-📝 ОПИСАНИЕ: {title} - качественный товар в категории {category}
-💰 РЕКОМЕНДАЦИИ: Укажите состояние товара, размер (если применимо) и цену"""
-
-                # Применяем описание ко всем изображениям этого товара
-                for idx in image_indexes:
-                    if 0 <= idx < len(descriptions):
-                        descriptions[idx] = description
-                        logger.info(
-                            f"🔍 Применили описание к изображению {idx}: {title}")
-                    else:
-                        logger.warning(
-                            f"⚠️ Неверный индекс изображения: {idx} (максимум {len(descriptions)-1})")
-
-            # Заполняем пустые описания
-            empty_count = 0
-            for i, desc in enumerate(descriptions):
-                if not desc:
-                    descriptions[i] = f"🏷️ ТОВАР: Товар {i+1}\n📂 КАТЕГОРИЯ: Разное\n📝 ОПИСАНИЕ: Товар требует дополнительного анализа"
-                    empty_count += 1
-                    logger.warning(
-                        f"⚠️ Изображение {i} не было сгруппировано, создали fallback описание")
-
-            logger.info(
-                f"✅ Batch анализ завершен! Обработано {len(descriptions)} изображений, {empty_count} fallback описаний")
-            return descriptions
-
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.error(f"❌ Ошибка парсинга JSON: {e}")
-            logger.error(f"Ответ Claude: {response_text[:500]}...")
-
-            # Fallback - возвращаем простые описания
-            fallback_descriptions = []
-            for i, (_, filename) in enumerate(image_batch):
-                fallback_descriptions.append(
-                    f"🏷️ ТОВАР: Товар из изображения {filename}\n📂 КАТЕГОРИЯ: Разное\n📝 ОПИСАНИЕ: Требует ручной категоризации")
-
-            return fallback_descriptions
+        return response_text
 
     except Exception as e:
         error_msg = f"❌ ОШИБКА BATCH АНАЛИЗА: {str(e)}"
         logger.error(error_msg)
-        return [error_msg] * len(image_batch)
+        return ""
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -571,7 +492,7 @@ async def analyze_single_image(file: UploadFile = File(...)):
 
 @app.post("/api/analyze-multiple")
 async def analyze_multiple_images(files: List[UploadFile] = File(...)):
-    """Анализ нескольких изображений"""
+    """Анализ нескольких изображений с группировкой по товарам"""
     try:
         logger.info(f"📥 Получено {len(files)} файлов для анализа")
 
@@ -618,11 +539,95 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                 status_code=400, detail="Нет валидных изображений для обработки")
 
         # Batch анализ всех изображений
-        descriptions = analyze_images_batch_with_claude(image_batch)
+        claude_response = analyze_images_batch_with_claude(image_batch)
 
-        # Формируем результаты
+        # Парсим результаты группировки из Claude
+        try:
+            # Пытаемся извлечь JSON из ответа Claude
+
+            # Ищем JSON в ответе
+            json_start = claude_response.find('[')
+            json_end = claude_response.rfind(']') + 1
+
+            if json_start != -1 and json_end > json_start:
+                json_str = claude_response[json_start:json_end]
+                products = json.loads(json_str)
+                logger.info(
+                    f"✅ Найдено {len(products)} сгруппированных товаров")
+
+                # Формируем результаты по группам товаров
+                results = []
+                for product_idx, product in enumerate(products):
+                    title = product.get('title', f'Товар {product_idx + 1}')
+                    category = product.get('category', 'Разное')
+                    subcategory = product.get('subcategory', '')
+                    image_indexes = product.get('image_indexes', [])
+
+                    # Собираем изображения для этого товара
+                    product_images = []
+                    for img_idx in image_indexes:
+                        if 0 <= img_idx < len(file_info):
+                            info = file_info[img_idx]
+                            image_base64 = base64.b64encode(
+                                info['contents']).decode('utf-8')
+                            product_images.append(
+                                f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
+
+                    if not product_images:  # Если нет изображений, берем первое доступное
+                        if file_info:
+                            info = file_info[0]
+                            image_base64 = base64.b64encode(
+                                info['contents']).decode('utf-8')
+                            product_images.append(
+                                f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}")
+
+                    # Создаем описание товара
+                    description = f"""🏷️ ТОВАР: {title}
+📂 КАТЕГОРИЯ: {category}
+📂 ПОДКАТЕГОРИЯ: {subcategory}
+📝 ОПИСАНИЕ: {title} - качественный товар в категории {category}
+💰 РЕКОМЕНДАЦИИ: Укажите состояние товара, размер (если применимо) и цену"""
+
+                    results.append({
+                        "id": f"product_{product_idx}_{int(time.time())}",
+                        "filename": f"grouped_product_{product_idx}",
+                        "width": 800,
+                        "height": 600,
+                        "size_bytes": sum(file_info[i]['size'] for i in image_indexes if 0 <= i < len(file_info)),
+                        "images": product_images,  # Массив изображений для товара
+                        # Первое изображение для совместимости
+                        "image_preview": product_images[0] if product_images else "",
+                        "description": description,
+                        "title": title,
+                        "category": category,
+                        "subcategory": subcategory,
+                        "image_indexes": image_indexes
+                    })
+
+                logger.info(f"✅ Сформировано {len(results)} товарных групп")
+
+                return JSONResponse({
+                    "success": True,
+                    "results": results,
+                    "processed_count": len(results),
+                    "total_files": len(files),
+                    "grouped": True,
+                    "summary": {
+                        "total_images": len(files),
+                        "processed_images": len(file_info),
+                        "grouped_products": len(results)
+                    }
+                })
+
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(
+                f"⚠️ Не удалось распарсить группировку: {e}, используем fallback")
+
+        # Fallback - возвращаем как отдельные изображения
         results = []
-        for i, (description, info) in enumerate(zip(descriptions, file_info)):
+        for i, info in enumerate(file_info):
+            # Создаем простое описание для каждого изображения
+            description = f"🏷️ ТОВАР: Товар из изображения {info['filename']}\n📂 КАТЕГОРИЯ: Разное\n📝 ОПИСАНИЕ: Требует ручной категоризации"
             # Кодируем изображение для браузера
             image_base64 = base64.b64encode(info['contents']).decode('utf-8')
 
@@ -632,18 +637,20 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
                 "width": 800,  # Временные значения
                 "height": 600,
                 "size_bytes": info['size'],
+                "images": [f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}"],
                 "image_preview": f"data:image/{info['filename'].split('.')[-1]};base64,{image_base64}",
                 "description": description
             })
 
         logger.info(
-            f"✅ Batch анализ завершен! Обработано {len(results)} изображений")
+            f"✅ Fallback анализ завершен! Обработано {len(results)} изображений")
 
         return JSONResponse({
             "success": True,
             "results": results,
             "processed_count": len(results),
             "total_files": len(files),
+            "grouped": False,
             "summary": {
                 "total_images": len(files),
                 "processed_images": len(results)
