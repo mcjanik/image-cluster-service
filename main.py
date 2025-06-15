@@ -626,6 +626,9 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
 
 ВАЖНО: Изображения пронумерованы от 0 до {len(image_batch)-1} (всего {len(image_batch)} изображений).
 
+Порядок изображений:
+{chr(10).join([f"Изображение {i}: (это {i+1}-е изображение в последовательности)" for i in range(len(image_batch))])}
+
 ЗАДАЧА: Найти изображения которые показывают ОДИН И ТОТ ЖЕ товар с разных ракурсов.
 
 ПРАВИЛА:
@@ -654,6 +657,7 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
 
 ВАЖНО: 
 - Используйте только индексы от 0 до {len(image_batch)-1}
+- Каждый индекс должен использоваться РОВНО ОДИН РАЗ
 - Объясните свои решения в поле "reasoning"!
 
 ВЕРНИТЕ ТОЛЬКО JSON БЕЗ ДОПОЛНИТЕЛЬНОГО ТЕКСТА."""
@@ -698,6 +702,8 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                 logger.info(
                     f"🔧 Валидация индексов: максимальный допустимый индекс = {max_valid_index}")
 
+                # Собираем все использованные индексы
+                all_used_indexes = []
                 for group in groups:
                     original_indexes = group.get('image_indexes', [])
                     valid_indexes = []
@@ -705,6 +711,7 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                     for idx in original_indexes:
                         if isinstance(idx, int) and 0 <= idx <= max_valid_index:
                             valid_indexes.append(idx)
+                            all_used_indexes.append(idx)
                         else:
                             logger.warning(
                                 f"⚠️ Группа {group.get('group_id', '?')}: неверный индекс {idx}, максимальный = {max_valid_index}")
@@ -713,6 +720,44 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
                     if original_indexes != valid_indexes:
                         logger.info(
                             f"✅ Группа {group.get('group_id', '?')}: исправлены индексы {original_indexes} → {valid_indexes}")
+
+                # Проверяем на пропущенные и дублированные индексы
+                expected_indexes = set(range(len(image_batch)))
+                used_indexes = set(all_used_indexes)
+                missing_indexes = expected_indexes - used_indexes
+                duplicate_indexes = [
+                    idx for idx in all_used_indexes if all_used_indexes.count(idx) > 1]
+
+                if missing_indexes:
+                    logger.warning(
+                        f"⚠️ Пропущенные индексы: {sorted(missing_indexes)}")
+                if duplicate_indexes:
+                    logger.warning(
+                        f"⚠️ Дублированные индексы: {sorted(set(duplicate_indexes))}")
+
+                logger.info(
+                    f"📊 Статистика индексов: использовано {len(used_indexes)}/{len(expected_indexes)}")
+
+                # Детальное логирование для отладки frontend
+                logger.info(f"🔍 ДЕТАЛЬНАЯ ИНФОРМАЦИЯ ДЛЯ FRONTEND:")
+                logger.info(f"  📁 Количество image_batch: {len(image_batch)}")
+                logger.info(f"  🔗 Будет создано image_urls:")
+                for i, (_, filename) in enumerate(image_batch):
+                    url = f"/debug-files/{session_id}/{i:02d}_{filename}"
+                    logger.info(f"    image_urls[{i}] = {url}")
+
+                logger.info(f"  📋 Группы и их индексы:")
+                for group in groups:
+                    group_id = group.get('group_id', '?')
+                    title = group.get('title', 'Без названия')
+                    indexes = group.get('image_indexes', [])
+                    logger.info(
+                        f"    Группа {group_id} ({title}): индексы {indexes}")
+                    for idx in indexes:
+                        if 0 <= idx < len(image_batch):
+                            _, filename = image_batch[idx]
+                            expected_url = f"/debug-files/{session_id}/{idx:02d}_{filename}"
+                            logger.info(f"      Индекс {idx} → {expected_url}")
 
                 return JSONResponse({
                     "success": True,
@@ -1034,21 +1079,21 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
 
                     description = "\n".join(description_parts)
 
-                    results.append({
-                        "id": f"product_{product_idx}_{int(time.time())}",
-                        "filename": f"grouped_product_{product_idx}",
-                        "width": 800,
-                        "height": 600,
-                        "size_bytes": sum(file_info[i]['size'] for i in valid_indexes if i < len(file_info)),
-                        "images": product_images,
-                        "image_preview": product_images[0] if product_images else "",
-                        "description": description,
-                        "title": title,
-                        "category": category,
-                        "subcategory": subcategory,
-                        "color": color,
-                        "image_indexes": valid_indexes
-                    })
+                results.append({
+                    "id": f"product_{product_idx}_{int(time.time())}",
+                    "filename": f"grouped_product_{product_idx}",
+                    "width": 800,
+                    "height": 600,
+                    "size_bytes": sum(file_info[i]['size'] for i in valid_indexes if i < len(file_info)),
+                    "images": product_images,
+                    "image_preview": product_images[0] if product_images else "",
+                    "description": description,
+                    "title": title,
+                    "category": category,
+                    "subcategory": subcategory,
+                    "color": color,
+                    "image_indexes": valid_indexes
+                })
 
                 logger.info(f"✅ Сформировано {len(results)} товарных групп")
 
