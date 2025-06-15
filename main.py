@@ -558,13 +558,13 @@ async def analyze_grouping_diagnostic(files: List[UploadFile] = File(...)):
         for i, file in enumerate(files):
             logger.info(f"  {i}: {file.filename} ({file.content_type})")
 
-        # СТАБИЛИЗАЦИЯ ПОРЯДКА: сортируем файлы по имени для предсказуемого порядка
-        files_sorted = sorted(files, key=lambda f: f.filename)
-        logger.info(f"📋 Порядок после сортировки по имени:")
-        for i, file in enumerate(files_sorted):
+        # ИСПРАВЛЕНИЕ: НЕ сортируем файлы, сохраняем исходный порядок от пользователя
+        # Проблема была в том что сортировка ломала соответствие индексов!
+        logger.info(f"📋 Сохраняем исходный порядок файлов (БЕЗ сортировки):")
+        for i, file in enumerate(files):
             logger.info(f"  {i}: {file.filename} ({file.content_type})")
 
-        for file in files_sorted:
+        for file in files:
             if not file.content_type or not file.content_type.startswith('image/'):
                 logger.warning(
                     f"⚠️ Пропускаем {file.filename} - неверный тип: {file.content_type}")
@@ -819,13 +819,10 @@ async def analyze_individual_images(files: List[UploadFile] = File(...)):
         for i, file in enumerate(files):
             logger.info(f"  {i}: {file.filename} ({file.content_type})")
 
-        # СТАБИЛИЗАЦИЯ ПОРЯДКА: сортируем файлы по имени для предсказуемого порядка
-        files_sorted = sorted(files, key=lambda f: f.filename)
-        logger.info(f"📋 Порядок после сортировки по имени:")
-        for i, file in enumerate(files_sorted):
+        for i, file in enumerate(files):
             logger.info(f"  {i}: {file.filename} ({file.content_type})")
 
-        for file in files_sorted:
+        for file in files:
             if not file.content_type or not file.content_type.startswith('image/'):
                 logger.warning(
                     f"⚠️ Пропускаем {file.filename} - неверный тип: {file.content_type}")
@@ -974,13 +971,10 @@ async def analyze_multiple_images(files: List[UploadFile] = File(...)):
         for i, file in enumerate(files):
             logger.info(f"  {i}: {file.filename} ({file.content_type})")
 
-        # СТАБИЛИЗАЦИЯ ПОРЯДКА: сортируем файлы по имени для предсказуемого порядка
-        files_sorted = sorted(files, key=lambda f: f.filename)
-        logger.info(f"📋 Порядок после сортировки по имени:")
-        for i, file in enumerate(files_sorted):
+        for i, file in enumerate(files):
             logger.info(f"  {i}: {file.filename} ({file.content_type})")
 
-        for file in files_sorted:
+        for file in files:
             if not file.content_type or not file.content_type.startswith('image/'):
                 logger.warning(
                     f"⚠️ Пропускаем {file.filename} - неверный тип: {file.content_type}")
